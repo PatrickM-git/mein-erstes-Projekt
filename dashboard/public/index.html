@@ -24,6 +24,7 @@
           <a href="#n8n-live" class="nav-link">n8n Live</a>
           <a href="#lager" class="nav-link">Lagerprüfung</a>
           <a href="#datenqualitaet" class="nav-link">Datenqualität</a>
+          <a href="#einstellungen" class="nav-link">⚙ Einstellungen</a>
         </nav>
 
         <div class="sidebar-panel">
@@ -121,6 +122,41 @@
               </div>
             </div>
             <div id="dataQuality" class="table-surface"></div>
+          </div>
+        </section>
+        <section id="einstellungen" class="section">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">n8n Verbindung</p>
+              <h2>Einstellungen</h2>
+            </div>
+            <span id="configHealth" class="status-pill">Prüfung läuft</span>
+          </div>
+
+          <div class="settings-card">
+            <div class="settings-info" id="configStatus"></div>
+
+            <form id="configForm" class="settings-form" autocomplete="off">
+              <div class="form-group">
+                <label for="inputBaseUrl">n8n Base-URL</label>
+                <input id="inputBaseUrl" type="url" class="form-input" placeholder="http://127.0.0.1:5678" autocomplete="off" />
+                <div class="form-hint">Lokale n8n-Adresse, standard ist http://127.0.0.1:5678</div>
+              </div>
+
+              <div class="form-group">
+                <label for="inputApiKey">n8n API-Key</label>
+                <div class="input-row">
+                  <input id="inputApiKey" type="password" class="form-input" placeholder="Leer lassen = vorhandener Key bleibt erhalten" autocomplete="new-password" />
+                  <button type="button" id="toggleApiKey" class="button small">Anzeigen</button>
+                </div>
+                <div class="form-hint" id="apiKeyHint">Der Key wird lokal in <code>.dashboard-config.json</code> gespeichert und ist in <code>.gitignore</code> eingetragen — er wird nie ins Git-Repository übertragen.</div>
+              </div>
+
+              <div class="form-actions">
+                <button type="submit" class="button primary" id="saveConfigButton">Speichern</button>
+                <span id="saveConfigStatus" class="save-status"></span>
+              </div>
+            </form>
           </div>
         </section>
       </main>

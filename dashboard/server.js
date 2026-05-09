@@ -7,6 +7,7 @@ const zlib = require('zlib');
 const PORT = Number(process.env.PORT || 8787);
 const ROOT = path.resolve(__dirname, '..');
 const PUBLIC_DIR = path.join(__dirname, 'public');
+const CONFIG_FILE = path.join(__dirname, '.dashboard-config.json');
 const LOCAL_ENV_FILES = [
   path.join(ROOT, '.env.local'),
   path.join(__dirname, '.env.local'),
@@ -65,14 +66,41 @@ function loadLocalEnv() {
   }, {});
 }
 
+function readConfigFile() {
+  try {
+    if (!fs.existsSync(CONFIG_FILE)) return {};
+    return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function writeConfigFile(data) {
+  const existing = readConfigFile();
+  const merged = { ...existing, ...data };
+  // Never store empty string for apiKey — keep existing
+  if (!merged.n8nApiKey) delete merged.n8nApiKey;
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(merged, null, 2), 'utf8');
+  return merged;
+}
+
+function maskApiKey(key) {
+  if (!key || key.length < 8) return key ? '••••••••' : '';
+  return key.slice(0, 4) + '••••••••' + key.slice(-4);
+}
+
 function dashboardConfig() {
   const localEnv = loadLocalEnv();
-  const n8nBaseUrl = process.env.N8N_BASE_URL || localEnv.N8N_BASE_URL || 'http://127.0.0.1:5678';
-  const n8nApiKey = process.env.N8N_API_KEY || localEnv.N8N_API_KEY || '';
+  const fileConfig = readConfigFile();
+  // Priority: process.env > config file (UI-saved) > .env.local files
+  const n8nBaseUrl = process.env.N8N_BASE_URL || fileConfig.n8nBaseUrl || localEnv.N8N_BASE_URL || 'http://127.0.0.1:5678';
+  const n8nApiKey  = process.env.N8N_API_KEY  || fileConfig.n8nApiKey  || localEnv.N8N_API_KEY  || '';
+  const source = process.env.N8N_API_KEY ? 'env' : fileConfig.n8nApiKey ? 'config_file' : localEnv.N8N_API_KEY ? 'env_file' : 'none';
   return {
     n8nBaseUrl: n8nBaseUrl.replace(/\/+$/, ''),
     n8nApiKey,
     hasN8nApiKey: Boolean(n8nApiKey),
+    source,
     envFiles: LOCAL_ENV_FILES.filter((filePath) => fs.existsSync(filePath)).map((filePath) => path.relative(ROOT, filePath)),
   };
 }
@@ -959,6 +987,51 @@ const server = http.createServer(async (req, res) => {
   try {
     if (parsed.pathname === '/api/dashboard') {
       sendJson(res, 200, await buildDashboard());
+      return;
+    }
+
+    // GET /api/config — gibt aktuelle Einstellungen zurueck (API-Key NIEMALS im Klartext)
+    if (parsed.pathname === '/api/config' && req.method === 'GET') {
+      const cfg = dashboardConfig();
+      sendJson(res, 200, {
+        n8nBaseUrl:    cfg.n8nBaseUrl,
+        hasApiKey:     cfg.hasN8nApiKey,
+        apiKeyMasked:  maskApiKey(cfg.n8nApiKey),
+        source:        cfg.source,
+      });
+      return;
+    }
+
+    // POST /api/config — speichert Einstellungen in .dashboard-config.json
+    if (parsed.pathname === '/api/config' && req.method === 'POST') {
+      // Kein Speichern wenn der Key per Umgebungsvariable gesetzt ist
+      if (process.env.N8N_API_KEY) {
+        sendJson(res, 409, { ok: false, message: 'N8N_API_KEY ist als Umgebungsvariable gesetzt und hat Vorrang. Bitte dort aendern.' });
+        return;
+      }
+      const body = await new Promise((resolve, reject) => {
+        let data = '';
+        req.on('data', (chunk) => { data += chunk; });
+        req.on('end', () => {
+          try { resolve(JSON.parse(data)); } catch { reject(new Error('Ungültiges JSON')); }
+        });
+        req.on('error', reject);
+      });
+      const update = {};
+      if (typeof body.n8nBaseUrl === 'string' && body.n8nBaseUrl.trim()) {
+        update.n8nBaseUrl = body.n8nBaseUrl.trim().replace(/\/+$/, '');
+      }
+      if (typeof body.n8nApiKey === 'string' && body.n8nApiKey.trim()) {
+        update.n8nApiKey = body.n8nApiKey.trim();
+      }
+      const saved = writeConfigFile(update);
+      sendJson(res, 200, {
+        ok:           true,
+        n8nBaseUrl:   saved.n8nBaseUrl || dashboardConfig().n8nBaseUrl,
+        hasApiKey:    Boolean(saved.n8nApiKey),
+        apiKeyMasked: maskApiKey(saved.n8nApiKey || ''),
+        source:       'config_file',
+      });
       return;
     }
 

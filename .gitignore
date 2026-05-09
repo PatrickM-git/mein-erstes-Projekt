@@ -1,6 +1,7 @@
 # Local secrets
 .env.local
 dashboard/.env.local
+dashboard/.dashboard-config.json
 
 # VBScript-Wrapper sind verboten (werden von Antivirenprogrammen als Malware erkannt).
 # Den versteckten Start bitte ausschliesslich ueber PowerShell -WindowStyle Hidden
