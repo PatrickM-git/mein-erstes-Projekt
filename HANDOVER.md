@@ -2,191 +2,149 @@
 
 > Update this file at the end of every session. Archive the previous version to `HANDOVER_ARCHIVE/HANDOVER_<date>.md` before overwriting.
 
-## Stand: 2026-05-09
+## Stand: 2026-05-09 (Session 2)
 
 ### Kurzfassung
 
-Das Projekt ist ein n8n-basiertes Automatenlager-System mit Google Sheets als Arbeits- und Logschicht. Es verarbeitet Rechnungen, Produktvorschlaege, Nayax-Verkaeufe, FIFO-Lagerchargen, MDB-/Slot-Historisierung und MHD-/Bestandswarnungen. Zusaetzlich gibt es ein lokales Dashboard unter `http://127.0.0.1:8787/`, das Workflows, Live-n8n-Status und Datenqualitaet sichtbar macht.
+Das Projekt ist ein n8n-basiertes Automatenlager-System mit Google Sheets als Arbeits- und Logschicht.
+Es verarbeitet Rechnungen, Produktvorschlaege, Nayax-Verkaeufe, FIFO-Lagerchargen, MDB-/Slot-Historisierung
+und MHD-/Bestandswarnungen. Das lokale Dashboard laeuft unter `http://127.0.0.1:8787/` und zeigt
+Workflows, Live-n8n-Status, Datenqualitaet und enthalt jetzt eine Einstellungsseite fuer den API-Key.
 
-Der wichtigste Architekturpunkt: WF2 darf keine aktive Maschinenbelegung erzeugen. WF4 ist allein fuer aktive MDB-/Slot-Zuordnungen und Historisierung zustaendig.
+Der wichtigste Architekturpunkt: WF2 darf keine aktive Maschinenbelegung erzeugen.
+WF4 ist allein fuer aktive MDB-/Slot-Zuordnungen und Historisierung zustaendig.
 
 ### Was in dieser Session passiert ist
 
-- WF5 wurde fachlich korrigiert:
-  - Tagesverkaeufe bleiben in der Mail-Zusammenfassung enthalten.
-  - `Bestand im Automat` wird separat aus `current_machine_qty` angezeigt.
-  - `Bestand gesamt` wird aus der Summe aktiver Lagerchargen je `product_key` gesetzt.
-  - Die alte Doppelzaehlung `current_machine_qty + remaining_qty` wurde entfernt.
-  - Die missverstaendliche Mailzeile `Lagerbestand` wurde entfernt.
-- Vorheriger Handover-Stand wurde archiviert unter `HANDOVER_ARCHIVE/HANDOVER_2026-05-09_before-wf5-stock-fix.md`.
+#### 1. Projekt-Infrastruktur eingerichtet
+- `CLAUDE.md`, `HANDOVER.md` und `HANDOVER_ARCHIVE/` im Projekt-Root angelegt.
+- Git-Identitaet (`PatrickM-git` / `patrickzinke@gmx.net`) global konfiguriert.
+
+#### 2. Sicherheitsvorfall behoben – Nayax Bearer-Token
+- GitHub Secret Scanning hatte den echten Nayax Bearer-Token in `WF3...json` erkannt.
+- Token durch Platzhalter `Bearer NAYAX_TOKEN_IN_N8N_CREDENTIAL_EINTRAGEN` ersetzt.
+- Git-History vollstaendig per `git filter-repo` bereinigt (Token in keinem Commit mehr vorhanden).
+- Alter Token wurde vom Nutzer im Nayax-/Moma-Portal geloescht und neu erstellt.
+- Neuer Token wird ausschliesslich als n8n-Credential gespeichert, nicht in JSON-Dateien.
+- `CLAUDE.md` um Pflichtsektion „Security Rules" ergaenzt.
+
+#### 3. Malware-Alarm behoben – VBScript entfernt
+- `dashboard/start-dashboard-hidden.vbs` wurde von Bitdefender als Malware eingestuft.
+- Ursache: VBScript startete PowerShell mit `window style 0` (versteckt) – klassisches Malware-Muster.
+- Datei geloescht. Ersatz: PowerShell direkt mit `-WindowStyle Hidden` aufrufen.
+- `create-dashboard-startup-shortcut.ps1` zeigt jetzt direkt auf `powershell.exe -WindowStyle Hidden`.
+- `register-dashboard-autostart.ps1` (Task Scheduler) um `-WindowStyle Hidden -NonInteractive` ergaenzt.
+- `*.vbs` in `.gitignore` geblockt, damit VBS-Dateien nie wieder eingecheckt werden koennen.
+
+#### 4. Dashboard-Einstellungsseite hinzugefuegt
+- Neuer Navigationspunkt „⚙ Einstellungen" im Dashboard.
+- n8n Base-URL und API-Key koennen direkt im Browser eingetragen werden.
+- Speicherort: `dashboard/.dashboard-config.json` (lokal, gitignored, nie committed).
+- API-Key wird vom Server **niemals** im Klartext zurueckgegeben – nur maskiert (`eyJa••••••••Uuj0`).
+- Neue API-Endpunkte: `GET /api/config` und `POST /api/config`.
+- Prioritaetsreihenfolge: `process.env` > `.dashboard-config.json` > `.env.local`.
+- Formular sperrt sich automatisch, wenn Key per Umgebungsvariable gesetzt ist.
 
 ### Was bisher gebaut wurde
 
 #### Workflows
 
 - `WF1 - Rechnungseingang automatisch mit Claude.json`
-  - verarbeitet Rechnungseingang
-  - bereitet Claude-/KI-Auswertung vor
-  - prueft gegen Stammdaten
-  - startet WF2 per Execute Workflow
+  - verarbeitet Rechnungseingang, bereitet Claude-Auswertung vor, startet WF2
 
 - `WF2 - Smart Product Selection - Rechnungsvorschlaege freigeben.json`
-  - verarbeitet Rechnungsvorschlaege
   - legt Produktstamm, Aliase und Lagerchargen an
-  - ist fuer Rechnungsvorschlagsfreigabe zustaendig
-  - kann WF4 optional fuer direkte Slotzuordnung starten
   - darf keine aktive Slotbelegung als Nebenwirkung setzen
+  - kann WF4 optional starten
 
 - `WF3 Nayax Lynx FIFO Lagerbestand - manueller Abruf - mit WF4 Integration.json`
-  - verarbeitet Nayax-Verkaeufe
-  - nutzt FIFO fuer Lagerchargen
-  - schreibt `Verarbeitete_Transaktionen`
-  - ProductName bleibt primaeres Matching
-  - MDB-Code ist Kontrollsignal
-  - kann bei MDB-Abweichungen WF4 vorbereiten
+  - verarbeitet Nayax-Verkaeufe per FIFO
+  - Nayax-Token: **nur als n8n-Credential** eintragen, nie in JSON schreiben
 
 - `WF4 - MDB Produktzuordnung bearbeiten.json`
   - historisiert Produkt-/MDB-/Slotwechsel
-  - schliesst alte aktive Produktzeilen
-  - ergaenzt vorhandene WF2-Produktzeilen ohne Slotdaten, statt neue Dubletten zu erzeugen
-  - blockt doppelte aktive Slotzeilen
-  - schreibt Produktwechsel-Log und Hinweise
+  - einzige Quelle fuer aktive Slotbelegungen
 
 - `WF5 - MHD und niedrige Lagercharge ueberwachen.json`
-  - prueft aktive Lagerchargen auf MHD innerhalb 30 Tagen
-  - prueft niedrige Bestaende
-  - wertet Tagesverkaeufe aus `Verarbeitete_Transaktionen` aus
-  - erzeugt Hinweise
-  - sendet eine Mail-Zusammenfassung
-  - zeigt `Bestand im Automat` und `Bestand gesamt`, ohne Automatenbestand doppelt zu zaehlen
+  - MHD- und Bestandspruefung, Mail-Zusammenfassung
+  - `Bestand im Automat` = `current_machine_qty`
+  - `Bestand gesamt` = Summe aktiver Lagerchargen je `product_key` (NICHT + `current_machine_qty`)
 
 - `WF0 - product_slot_id Backfill.json`
-  - einmaliger Reparaturworkflow
-  - erzeugt fehlende `product_slot_id` fuer aktive Slotzeilen
-  - nicht fuer laufenden Tagesbetrieb gedacht
+  - einmaliger Reparaturworkflow, nicht fuer Tagesbetrieb
 
-#### Dashboard
+#### Dashboard (`dashboard/`)
 
-Das Dashboard wurde in `dashboard/` gebaut.
-
-Es kann:
-
-- lokale Workflow-JSONs analysieren
-- Live-n8n-Workflows per API lesen
-- Workflow-Aktionen als Buttons anzeigen
-- Formulare oeffnen oder Webhook-Workflows starten
-- Google Sheets live lesen, sofern per Link/CSV erreichbar
-- sonst auf lokale XLSX-Datei zurueckfallen
-- Datenqualitaetsprobleme anzeigen:
-  - aktive Zeilen ohne `product_slot_id`
-  - doppelte aktive Slotbelegungen
-  - verwaiste Lagerchargen
-  - niedrige Restbestaende / MHD-Warnungen
-
-Lokaler Start:
+- Node.js-Server + HTML/CSS/JS-Frontend
+- Laedt live aus Google Sheets, faellt auf lokale XLSX zurueck
+- Zeigt Workflow-Aktionen, n8n-Live-Status, MHD-/Lager-Warnungen, Datenqualitaet
+- **Neu:** Einstellungsseite fuer API-Key (kein Datei-Editor noetig)
+- Autostart via Task Scheduler: `register-dashboard-autostart.ps1` als Admin ausfuehren
 
 ```powershell
 cd dashboard
 npm start
+# http://127.0.0.1:8787/
 ```
 
-Dashboard-URL:
+### Was funktioniert (geprueft 2026-05-09)
 
-```text
-http://127.0.0.1:8787/
-```
-
-### Was funktioniert
-
-- Lokale Dashboard-App mit Node.js-Server und HTML/CSS/JS-Frontend.
-- Dashboard liest `.env.local` aus Projektwurzel oder `dashboard/`.
-- Dashboard kann n8n per API auslesen, wenn `N8N_API_KEY` gesetzt ist.
-- Dashboard zeigt operative Buttons fuer WF1 bis WF5. WF0 ist nicht im Dashboard als Tagesaktion vorgesehen.
-- Code-Nodes mit `.first()` oder `$items(...)` stehen in den geprueften lokalen Workflow-JSONs auf `runOnceForAllItems`.
-- `.env.local`, Dashboard-Logs und lokale Patchskripte sind fuer Git ausgeschlossen.
+- Dashboard laeuft, Google Sheets Live-Daten werden geladen (40 aktive Produktzeilen).
+- Einstellungsseite erreichbar, API-Key kann ohne Datei-Editor gesetzt werden.
+- `*.vbs` geblockt, kein Antivirus-Alarm mehr.
+- Git-History sauber, kein Token in alten Commits.
+- Alle 6 lokalen Workflow-JSONs werden geladen (16/18 Pruefungen ok).
 
 ### Naechster konkreter Schritt
 
-Der naechste sinnvolle Entwicklungsschritt ist WF5 in n8n zu importieren bzw. den live Workflow damit zu ersetzen und einen kontrollierten Testlauf auszufuehren.
+WF5 in n8n importieren und testen:
 
-Dabei unbedingt beachten:
+1. Lokale `WF5...json` in n8n importieren (live Workflow ersetzen).
+2. WF5-Testlauf ausfuehren.
+3. Mail pruefen:
+   - Tagesverkaeufe vorhanden
+   - `Bestand im Automat` = `current_machine_qty`
+   - `Bestand gesamt` = Summe aktiver Chargen (ohne Doppelzaehlung)
+4. Erst nach erfolgreichem Test WF5 aktiviert lassen.
 
-```text
-Aktive Lagercharge remaining_qty = Gesamtbestand inklusive Automatenbestand.
-```
-
-Deshalb darf WF5 bei `Bestand gesamt` nicht rechnen:
-
-```text
-current_machine_qty + remaining_qty
-```
-
-Sondern:
-
-```text
-Bestand im Automat = current_machine_qty
-Bestand gesamt = Summe aktive Lagerchargen.remaining_qty je product_key
-```
-
-Testcheckliste:
-
-1. WF5-Mail mit echten Tagesverkaeufen testen.
-2. Anzeige in der Mail pruefen:
-   - Heute verkauft
-   - MHD abgelaufen / laeuft bald ab
-   - Niedriger Bestand
-   - Bestand im Automat
-   - Bestand gesamt
-3. Testlauf in n8n ausfuehren.
-4. Erst danach WF5 produktiv freigeben bzw. aktiviert lassen.
-
-### Sicherheitsvorfall 2026-05-09 – Nayax Bearer-Token (behoben)
-
-- Der Nayax Bearer-Token stand im Klartext in `WF3...json` und wurde von GitHub Secret Scanning erkannt.
-- Der Token wurde aus der JSON entfernt. Der Platzhalter lautet jetzt `Bearer NAYAX_TOKEN_IN_N8N_CREDENTIAL_EINTRAGEN`.
-- **Pflichtaktion:** Den alten Token sofort im Nayax-/Moma-Portal sperren und einen neuen generieren.
-- Den neuen Token ausschliesslich als n8n-Credential (`HTTP Header Auth`) hinterlegen, niemals direkt in Workflow-JSON schreiben.
-- Die Git-History wurde per `git filter-repo` bereinigt, sodass der Token auch in aelteren Commits nicht mehr vorhanden ist.
+Neuen Nayax-Token in n8n eintragen:
+- n8n oeffnen → Credentials → HTTP Header Auth anlegen
+- Name z.B. `Nayax Bearer`
+- Header: `Authorization`, Wert: `Bearer <neuer-token>`
+- In WF3 den Nayax-Last-Sales-Node auf diese Credential umstellen.
 
 ### Bekannte Probleme und technische Schulden
 
-- `dashboard/.env.local` enthaelt lokalen n8n API-Zugang und darf nicht committed werden.
-- `dashboard/logs/` enthaelt Laufzeitlogs und darf nicht committed werden.
-- `patch_wf5_daily_sales.py` ist ein lokales Einmal-/Patchskript und ist bewusst ignoriert.
-- WF5 ist lokal korrigiert, aber noch nicht in n8n live getestet/importiert.
-- Live-n8n-Workflows und lokale JSON-Dateien koennen auseinanderlaufen. Vor produktiven Aenderungen immer klaeren, ob die lokale JSON oder der live exportierte n8n-Workflow fuehrend ist.
-- Langfristig waere eine Trennung von Produktstamm und Slot-Historie sauberer als beide Konzepte in `Produkte` zu fuehren.
+- WF5 lokal korrigiert, aber noch nicht in n8n live getestet/importiert.
+- n8n API-Key fuer Dashboard noch nicht eingetragen (Einstellungsseite benutzen).
+- Live-n8n-Workflows und lokale JSONs koennen auseinanderlaufen – vor produktiven Aenderungen klaeren, welche Version fuehrend ist.
+- `dashboard/logs/` und `patch_wf5_daily_sales.py` sind lokal und gitignored.
+- Langfristig waere eine Trennung von Produktstamm und Slot-Historie sauberer.
 
 ### Wichtige fachliche Regeln
 
-- WF2 ist fuer Produktstamm, Alias, Lagercharge und Rechnungsvorschlaege zustaendig.
-- WF2 ist nicht fuer `active = TRUE`, `machine_id`, `mdb_code`, `product_slot_id`, `valid_from_datetime` oder `valid_to_datetime` zustaendig.
-- WF4 ist die einzige Wahrheit fuer aktive MDB-/Slot-Zuordnungen.
-- `active = TRUE` bedeutet aktive Slotbelegung, nicht Produktexistenz.
-- ProductName bleibt im Verkaufsworkflow vorerst fuehrendes Matching.
-- MDB-Code ist aktuell Kontrollsignal und Warn-/WF4-Ausloeser.
+- WF2: Produktstamm, Alias, Lagercharge, Rechnungsvorschlaege.
+- WF2: Nicht zustaendig fuer `active`, `machine_id`, `mdb_code`, `product_slot_id`, `valid_from/to_datetime`.
+- WF4: Einzige Quelle fuer aktive MDB-/Slot-Zuordnungen.
+- `active = TRUE` = aktive Slotbelegung, nicht Produktexistenz.
+- Kein Token/Secret direkt in Workflow-JSON – immer n8n-Credential verwenden.
 - Keine automatische produktive Aenderung in Nayax/Moma.
-- Google Sheets wird nicht manuell gepflegt, sondern ueber n8n Forms und Workflows.
+- Google Sheets wird ausschliesslich ueber n8n Forms und Workflows gepflegt.
 
 ### Relevante Google-Sheets-Tabs
 
-- `Produkte`
-- `Lagerchargen`
-- `Produkt_Aliase`
-- `Produktwechsel_Log`
-- `Fehler_und_Hinweise`
-- `Verarbeitete_Transaktionen`
-- `Produkt_Aenderungsvorschlaege`
-- `Bestandskorrektur_Vorschlaege` geplant
-- `Bestandskorrekturen_Log` geplant
+- `Produkte`, `Lagerchargen`, `Produkt_Aliase`
+- `Produktwechsel_Log`, `Fehler_und_Hinweise`
+- `Verarbeitete_Transaktionen`, `Produkt_Aenderungsvorschlaege`
+- `Bestandskorrektur_Vorschlaege` (geplant)
+- `Bestandskorrekturen_Log` (geplant)
 
 ### Hinweise fuer Claude Code
 
 1. Zuerst `README.md`, `ARCHITECTURE.md` und `CLAUDE.md` lesen.
-2. Danach die lokalen Workflow-JSONs nicht blind ueberschreiben, sondern mit live n8n abgleichen.
-3. Keine Secrets aus `dashboard/.env.local` ausgeben oder committen.
-4. Bei n8n-Code-Nodes, die `.first()` oder `$items(...)` verwenden, immer `Run Once for All Items` setzen.
-5. Bei WF2/WF4-Aenderungen die Eigentuemerschaft beachten:
-   - WF2 Produkt/Lager/Rechnung
-   - WF4 Slot/Historie
-6. Vor jedem produktiven Import in n8n mindestens einen Testlauf mit Testdaten machen.
+2. Keine Tokens oder Secrets in Workflow-JSONs schreiben – immer n8n-Credential.
+3. Vor Workflow-Aenderungen klaeren: lokale JSON oder live n8n fuehrend?
+4. Code-Nodes mit `.first()` oder `$items(...)` immer auf `runOnceForAllItems` setzen.
+5. WF2/WF4-Eigentuemer beachten: WF2 = Produkt/Lager/Rechnung, WF4 = Slot/Historie.
+6. Vor produktivem n8n-Import mindestens einen Testlauf mit Testdaten machen.
+7. API-Key fuer Dashboard: Einstellungsseite im Dashboard nutzen, nicht `.env.local` bearbeiten.
