@@ -97,10 +97,11 @@ N8N_API_KEY=...
 
 ## Current Next Step
 
-Finish WF5:
+Test/import WF5 in n8n:
 
-- include products sold today in the daily report
-- show `Bestand im Automat`
-- show `Bestand gesamt`
+- products sold today are included in the daily report
+- `Bestand im Automat` is shown separately
+- `Bestand gesamt` is based on active warehouse batches
 - do not calculate total stock as `current_machine_qty + remaining_qty`
 - active warehouse batch `remaining_qty` already includes machine stock
+- run one controlled WF5 test before replacing/activating the live n8n workflow

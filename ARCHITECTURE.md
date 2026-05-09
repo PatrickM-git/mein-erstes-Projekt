@@ -179,10 +179,10 @@ Wenn Google Sheets live nicht lesbar ist, nutzt das Dashboard die lokale XLSX-Da
 
 ## Offen und geplant
 
-- WF5 fertig validieren:
-  - Tagesverkaeufe korrekt in die Mail aufnehmen
-  - `Bestand gesamt` darf nicht `Automatenbestand + aktive Lagercharge` rechnen, weil die aktive Lagercharge den Gesamtbestand bereits inklusive Automatenbestand enthaelt
-  - E-Mail-Anzeige fuer Bestand im Automat und Bestand gesamt vereinheitlichen
+- WF5 in n8n testen und produktiv uebernehmen:
+  - Tagesverkaeufe sind in der lokalen JSON in die Mail aufgenommen
+  - `Bestand gesamt` wird aus aktiven Lagerchargen gerechnet, ohne Automatenbestand doppelt zu zaehlen
+  - E-Mail-Anzeige zeigt `Bestand im Automat` und `Bestand gesamt`
 - WF1/WF2/WF4 End-to-End-Test mit neuem Produkt und optionalem Slot-Einsatz.
 - WF3 End-to-End-Test mit Nayax-Verkauf, FIFO-Abbuchung und MDB-Abweichung.
 - Live-n8n-Workflows regelmaessig mit den lokalen JSON-Dateien synchron halten.

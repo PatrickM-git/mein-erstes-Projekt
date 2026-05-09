@@ -10,16 +10,6 @@ Das Projekt ist ein n8n-basiertes Automatenlager-System mit Google Sheets als Ar
 
 Der wichtigste Architekturpunkt: WF2 darf keine aktive Maschinenbelegung erzeugen. WF4 ist allein fuer aktive MDB-/Slot-Zuordnungen und Historisierung zustaendig.
 
-### Was in dieser Session passiert ist
-
-- WF5 wurde fachlich korrigiert:
-  - Tagesverkaeufe bleiben in der Mail-Zusammenfassung enthalten.
-  - `Bestand im Automat` wird separat aus `current_machine_qty` angezeigt.
-  - `Bestand gesamt` wird aus der Summe aktiver Lagerchargen je `product_key` gesetzt.
-  - Die alte Doppelzaehlung `current_machine_qty + remaining_qty` wurde entfernt.
-  - Die missverstaendliche Mailzeile `Lagerbestand` wurde entfernt.
-- Vorheriger Handover-Stand wurde archiviert unter `HANDOVER_ARCHIVE/HANDOVER_2026-05-09_before-wf5-stock-fix.md`.
-
 ### Was bisher gebaut wurde
 
 #### Workflows
@@ -55,10 +45,9 @@ Der wichtigste Architekturpunkt: WF2 darf keine aktive Maschinenbelegung erzeuge
 - `WF5 - MHD und niedrige Lagercharge ueberwachen.json`
   - prueft aktive Lagerchargen auf MHD innerhalb 30 Tagen
   - prueft niedrige Bestaende
-  - wertet Tagesverkaeufe aus `Verarbeitete_Transaktionen` aus
   - erzeugt Hinweise
   - sendet eine Mail-Zusammenfassung
-  - zeigt `Bestand im Automat` und `Bestand gesamt`, ohne Automatenbestand doppelt zu zaehlen
+  - hat lokal bereits eine Erweiterung fuer Tagesverkaeufe vorbereitet
 
 - `WF0 - product_slot_id Backfill.json`
   - einmaliger Reparaturworkflow
@@ -107,7 +96,7 @@ http://127.0.0.1:8787/
 
 ### Naechster konkreter Schritt
 
-Der naechste sinnvolle Entwicklungsschritt ist WF5 in n8n zu importieren bzw. den live Workflow damit zu ersetzen und einen kontrollierten Testlauf auszufuehren.
+Der naechste sinnvolle Entwicklungsschritt ist WF5 finalisieren und testen.
 
 Dabei unbedingt beachten:
 
@@ -128,7 +117,7 @@ Bestand im Automat = current_machine_qty
 Bestand gesamt = Summe aktive Lagerchargen.remaining_qty je product_key
 ```
 
-Testcheckliste:
+Danach:
 
 1. WF5-Mail mit echten Tagesverkaeufen testen.
 2. Anzeige in der Mail pruefen:
@@ -138,14 +127,14 @@ Testcheckliste:
    - Bestand im Automat
    - Bestand gesamt
 3. Testlauf in n8n ausfuehren.
-4. Erst danach WF5 produktiv freigeben bzw. aktiviert lassen.
+4. Erst danach WF5 produktiv ersetzen oder live aktualisieren.
 
 ### Bekannte Probleme und technische Schulden
 
 - `dashboard/.env.local` enthaelt lokalen n8n API-Zugang und darf nicht committed werden.
 - `dashboard/logs/` enthaelt Laufzeitlogs und darf nicht committed werden.
 - `patch_wf5_daily_sales.py` ist ein lokales Einmal-/Patchskript und ist bewusst ignoriert.
-- WF5 ist lokal korrigiert, aber noch nicht in n8n live getestet/importiert.
+- WF5 enthaelt lokal eine angefangene Tagesverkaufs-/Mail-Erweiterung. Die Bestandsgesamtberechnung muss wegen der aktiven Lagerchargenregel final korrigiert/validiert werden.
 - Live-n8n-Workflows und lokale JSON-Dateien koennen auseinanderlaufen. Vor produktiven Aenderungen immer klaeren, ob die lokale JSON oder der live exportierte n8n-Workflow fuehrend ist.
 - Langfristig waere eine Trennung von Produktstamm und Slot-Historie sauberer als beide Konzepte in `Produkte` zu fuehren.
 

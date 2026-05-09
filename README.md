@@ -13,7 +13,7 @@ Das Ziel ist ein operatives System, das Nayax-Verkaeufe automatisch verarbeitet,
 - WF3 verarbeitet Nayax-Verkaeufe mit FIFO-Abbuchung. ProductName bleibt vorerst das fuehrende Matching, MDB-Code ist Kontrollsignal.
 - WF3 kann WF4 bei MDB-Abweichungen vorbereiten, ohne Verkaeufe hart zu blockieren.
 - WF4 ist die einzige fachliche Wahrheit fuer aktive MDB-/Slot-Zuordnungen, product_slot_id, active TRUE/FALSE und Historisierung.
-- WF5 ueberwacht MHD und niedrige Lagerbestaende und erstellt eine Mail-Zusammenfassung. Eine Erweiterung um Tagesverkaeufe ist lokal vorbereitet, die Bestandsgesamtlogik muss vor produktivem Einsatz final validiert werden.
+- WF5 ueberwacht MHD, niedrige Lagerbestaende und Tagesverkaeufe und erstellt eine Mail-Zusammenfassung. Die lokale JSON rechnet `Bestand gesamt` aus aktiven Lagerchargen, ohne den Automatenbestand doppelt zu zaehlen.
 - Ein lokales Dashboard unter `dashboard/` zeigt Workflows, Live-n8n-Status, Google-Sheets-/XLSX-Datenqualitaet und Buttons zum Starten bzw. Oeffnen der wichtigsten Workflows.
 - WF0 ist ein einmaliger Reparaturworkflow fuer product_slot_id-Backfill und gehoert nicht zum laufenden Tagesbetrieb.
 
