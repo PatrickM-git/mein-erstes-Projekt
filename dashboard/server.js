@@ -1,0 +1,1021 @@
+const fs = require('fs');
+const http = require('http');
+const path = require('path');
+const url = require('url');
+const zlib = require('zlib');
+
+const PORT = Number(process.env.PORT || 8787);
+const ROOT = path.resolve(__dirname, '..');
+const PUBLIC_DIR = path.join(__dirname, 'public');
+const LOCAL_ENV_FILES = [
+  path.join(ROOT, '.env.local'),
+  path.join(__dirname, '.env.local'),
+];
+
+const workflowFiles = [
+  'WF0 - product_slot_id Backfill.json',
+  'WF1 - Rechnungseingang automatisch mit Claude.json',
+  'WF2 - Smart Product Selection - Rechnungsvorschlaege freigeben.json',
+  'WF3 Nayax Lynx FIFO Lagerbestand - manueller Abruf - mit WF4 Integration.json',
+  'WF4 - MDB Produktzuordnung bearbeiten.json',
+  'WF5 - MHD und niedrige Lagercharge ueberwachen.json',
+];
+
+const workbookFilePattern = /^nayax_lager.*\.xlsx$/i;
+const googleSheetId = '12KzLrJzZamaHNwDejQXdyBartHCoCbzN9PFK3tF9pSo';
+const googleSheetUrl = `https://docs.google.com/spreadsheets/d/${googleSheetId}/edit?gid=1505466008#gid=1505466008`;
+const liveSheetNames = [
+  'Dashboard',
+  'Produkte',
+  'Lagerchargen',
+  'Produkt_Aenderungsvorschlaege',
+  'Produkt_Aliase',
+  'Rechnungseingang_Pruefung',
+  'Lagerchargen_Vorschlaege',
+  'Bestandsaufnahme_Handschrift',
+  'Produktwechsel_Log',
+  'Fehler_und_Hinweise',
+  'Offene_Eingaben',
+  'Workflow_Anpassungen',
+  'Einstellungen',
+  'Quellen_und_Pruefung',
+  'Verarbeitete_Transaktionen',
+  'System_Status',
+];
+
+function parseEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) return {};
+  const values = {};
+  const lines = fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '').split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const index = trimmed.indexOf('=');
+    if (index === -1) continue;
+    const key = trimmed.slice(0, index).trim();
+    const value = trimmed.slice(index + 1).trim().replace(/^["']|["']$/g, '');
+    if (key) values[key] = value;
+  }
+  return values;
+}
+
+function loadLocalEnv() {
+  return LOCAL_ENV_FILES.reduce((values, filePath) => {
+    return { ...values, ...parseEnvFile(filePath) };
+  }, {});
+}
+
+function dashboardConfig() {
+  const localEnv = loadLocalEnv();
+  const n8nBaseUrl = process.env.N8N_BASE_URL || localEnv.N8N_BASE_URL || 'http://127.0.0.1:5678';
+  const n8nApiKey = process.env.N8N_API_KEY || localEnv.N8N_API_KEY || '';
+  return {
+    n8nBaseUrl: n8nBaseUrl.replace(/\/+$/, ''),
+    n8nApiKey,
+    hasN8nApiKey: Boolean(n8nApiKey),
+    envFiles: LOCAL_ENV_FILES.filter((filePath) => fs.existsSync(filePath)).map((filePath) => path.relative(ROOT, filePath)),
+  };
+}
+
+function clean(value) {
+  return String(value ?? '').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function normalizeNumber(value) {
+  const n = Number(clean(value).replace(',', '.'));
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function mdbNorm(value) {
+  const s = clean(value).replace(',', '.');
+  return /^\d+\.0+$/.test(s) ? String(parseInt(s, 10)) : s;
+}
+
+function isActive(value) {
+  return ['TRUE', '1', 'JA', 'YES', 'AKTIV', 'ACTIVE'].includes(clean(value).toUpperCase());
+}
+
+function formatIsoStamp(value) {
+  const raw = clean(value);
+  if (!raw) {
+    return `BACKFILL_${new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z')}`;
+  }
+
+  const excelSerial = Number(raw.replace(',', '.'));
+  const parsedDate = Number.isFinite(excelSerial) && excelSerial > 20000
+    ? new Date((excelSerial - 25569) * 86400 * 1000)
+    : new Date(raw);
+
+  if (!Number.isNaN(parsedDate.getTime())) {
+    return parsedDate.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+  }
+
+  return raw.replace(/[^A-Za-z0-9]/g, '').slice(0, 30);
+}
+
+function productSlotId(row) {
+  return [
+    'PS',
+    clean(row.machine_id),
+    mdbNorm(row.mdb_code),
+    clean(row.product_key),
+    formatIsoStamp(row.valid_from_datetime || row.valid_from),
+  ].join('_');
+}
+
+function parseDate(value) {
+  const text = clean(value);
+  if (!text) return null;
+
+  const serial = Number(text.replace(',', '.'));
+  if (Number.isFinite(serial) && serial > 20000) {
+    return new Date((serial - 25569) * 86400 * 1000);
+  }
+
+  const de = text.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  if (de) {
+    return new Date(Date.UTC(Number(de[3]), Number(de[2]) - 1, Number(de[1])));
+  }
+
+  const parsed = new Date(text);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let value = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    const next = text[i + 1];
+
+    if (inQuotes) {
+      if (char === '"' && next === '"') {
+        value += '"';
+        i += 1;
+      } else if (char === '"') {
+        inQuotes = false;
+      } else {
+        value += char;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inQuotes = true;
+    } else if (char === ',') {
+      row.push(value);
+      value = '';
+    } else if (char === '\n') {
+      row.push(value);
+      rows.push(row);
+      row = [];
+      value = '';
+    } else if (char !== '\r') {
+      value += char;
+    }
+  }
+
+  row.push(value);
+  if (row.some((cell) => clean(cell))) rows.push(row);
+  return rows;
+}
+
+function rowsToObjects(rows) {
+  if (!rows.length) return [];
+  const headers = rows[0].map(clean);
+  return rows.slice(1)
+    .filter((row) => row.some((cell) => clean(cell)))
+    .map((row, index) => {
+      const out = { row_number: index + 2 };
+      headers.forEach((header, i) => {
+        if (header) out[header] = row[i] ?? '';
+      });
+      return out;
+    });
+}
+
+function daysUntil(date) {
+  const now = new Date();
+  const a = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const b = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+  return Math.ceil((b - a) / 86400000);
+}
+
+function readJson(fileName) {
+  const fullPath = path.join(ROOT, fileName);
+  return JSON.parse(fs.readFileSync(fullPath, 'utf8').replace(/^\uFEFF/, ''));
+}
+
+function findLatestWorkbookFile() {
+  const candidates = fs.readdirSync(ROOT)
+    .filter((fileName) => workbookFilePattern.test(fileName))
+    .map((fileName) => ({
+      fileName,
+      mtimeMs: fs.statSync(path.join(ROOT, fileName)).mtimeMs,
+    }))
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return candidates[0]?.fileName || '';
+}
+
+function nodeNames(workflow) {
+  return (workflow.nodes || []).map((node) => node.name || '');
+}
+
+function getSetValue(node, key) {
+  const assignments = node?.parameters?.assignments?.assignments || [];
+  const found = assignments.find((item) => item.name === key);
+  return found ? found.value : undefined;
+}
+
+function summarizeWorkflow(fileName) {
+  const fullPath = path.join(ROOT, fileName);
+  const stat = fs.statSync(fullPath);
+  const workflow = readJson(fileName);
+  const nodes = workflow.nodes || [];
+  const names = nodeNames(workflow);
+  const codeNodes = nodes.filter((node) => node.type === 'n8n-nodes-base.code');
+  const aggregateCodeNodes = codeNodes.filter((node) => {
+    const nodeCode = clean(node.parameters?.jsCode);
+    return nodeCode.includes('.first()') || nodeCode.includes('$items(');
+  });
+  const googleNodes = nodes.filter((node) => node.type === 'n8n-nodes-base.googleSheets');
+  const executeNodes = nodes.filter((node) => node.type === 'n8n-nodes-base.executeWorkflow');
+  const mailNodes = nodes.filter((node) => node.type === 'n8n-nodes-base.emailSend');
+  const triggerNodes = nodes.filter((node) => /trigger/i.test(node.type || ''));
+  const codeModesOk = aggregateCodeNodes.every((node) => node.parameters?.mode === 'runOnceForAllItems');
+  const js = codeNodes.map((node) => clean(node.parameters?.jsCode)).join('\n');
+  const title = workflow.name || fileName.replace(/\.json$/i, '');
+
+  const checks = [];
+  const addCheck = (label, ok, detail) => checks.push({ label, ok, detail });
+
+  if (title.startsWith('WF0')) {
+    const config = nodes.find((node) => node.name === 'Config - WF0');
+    const updateNode = nodes.find((node) => node.name === 'Google Sheets - product_slot_id aktualisieren');
+    addCheck('Backfill nur manuell', names.includes('Manual Trigger'), 'keine automatische Aktivierung');
+    addCheck('Matching per row_number', updateNode?.parameters?.columns?.matchingColumns?.includes('row_number'), 'sicherer als product_key');
+    addCheck('Testmodus aktiv', Number(getSetValue(config, 'max_updates')) === 2, 'max_updates = 2');
+  }
+
+  if (title.startsWith('WF1')) {
+    addCheck('WF2-Start vorbereitet', names.some((name) => name.includes('WF2 Start')) && executeNodes.length > 0, 'Rechnung nach Pruefung an WF2');
+  }
+
+  if (title.startsWith('WF2')) {
+    addCheck('Slotdaten nicht blind setzen', js.includes('slot_direct_assignment') || js.includes('product_direct_slot_assignment'), 'WF4 wird optional gestartet');
+    addCheck('WF4 optional angebunden', executeNodes.some((node) => clean(node.name).includes('WF4')), 'Slotfreigabe bleibt in WF4');
+  }
+
+  if (title.startsWith('WF3')) {
+    addCheck('WF4-Integration vorhanden', names.some((name) => name.includes('WF4')), 'MDB-Abweichung kann WF4 vorbereiten');
+    addCheck('MDB bleibt Kontrollsignal', js.includes('MDB_CODE_CHANGED_FOR_PRODUCT') || js.includes('mdb'), 'ProductName bleibt fuehrend');
+  }
+
+  if (title.startsWith('WF4')) {
+    addCheck('Vorhandene WF2-Zeile ergaenzen', names.includes('Google Sheets - Vorhandene Produktzeilen ergänzen'), 'keine neue Dublette bei slotloser Basiszeile');
+    addCheck('Doppelte aktive Slots geblockt', js.includes('WF4_SLOT_ALREADY_ACTIVE'), 'erneuter Lauf erzeugt keine zweite aktive Slotzeile');
+  }
+
+  if (title.startsWith('WF5')) {
+    addCheck('GMX-Zusammenfassung', mailNodes.some((node) => clean(node.name).includes('GMX')), 'Mail nach jedem MHD-/Lagercheck');
+    addCheck('MHD und Bestand gekoppelt', js.includes('MHD_WITHIN_30_DAYS_LOW_BATCH_STOCK'), 'MHD <= 30 Tage und Restbestand < 5');
+  }
+
+  if (aggregateCodeNodes.length) {
+    addCheck('Aggregierende Code-Nodes', codeModesOk, `${aggregateCodeNodes.length} Node(s) mit .first() oder $items(...)`);
+  }
+
+  return {
+    fileName,
+    title,
+    active: Boolean(workflow.active),
+    updatedAt: stat.mtime.toISOString(),
+    nodeCount: nodes.length,
+    connectionCount: Object.keys(workflow.connections || {}).length,
+    triggerCount: triggerNodes.length,
+    codeNodeCount: codeNodes.length,
+    googleNodeCount: googleNodes.length,
+    executeNodeCount: executeNodes.length,
+    mailNodeCount: mailNodes.length,
+    codeModesOk,
+    triggers: triggerNodes.map((node) => node.name),
+    integrations: executeNodes.map((node) => node.name),
+    checks,
+  };
+}
+
+function summarizeN8nWorkflow(workflow) {
+  const nodes = workflow.nodes || [];
+  const codeNodes = nodes.filter((node) => node.type === 'n8n-nodes-base.code');
+  const aggregateCodeNodes = codeNodes.filter((node) => {
+    const nodeCode = clean(node.parameters?.jsCode);
+    return nodeCode.includes('.first()') || nodeCode.includes('$items(');
+  });
+  const triggerNodes = nodes.filter((node) => /trigger/i.test(node.type || ''));
+  const formTriggerNodes = nodes.filter((node) => node.type === 'n8n-nodes-base.formTrigger');
+  const webhookNodes = nodes.filter((node) => node.type === 'n8n-nodes-base.webhook');
+  const googleNodes = nodes.filter((node) => node.type === 'n8n-nodes-base.googleSheets');
+  const executeNodes = nodes.filter((node) => node.type === 'n8n-nodes-base.executeWorkflow');
+  const mailNodes = nodes.filter((node) => node.type === 'n8n-nodes-base.emailSend');
+
+  return {
+    id: clean(workflow.id),
+    name: clean(workflow.name),
+    active: Boolean(workflow.active),
+    updatedAt: workflow.updatedAt || workflow.createdAt || '',
+    nodeCount: nodes.length,
+    triggerCount: triggerNodes.length,
+    codeNodeCount: codeNodes.length,
+    aggregateCodeNodesOk: aggregateCodeNodes.every((node) => node.parameters?.mode === 'runOnceForAllItems'),
+    aggregateCodeNodeCount: aggregateCodeNodes.length,
+    googleNodeCount: googleNodes.length,
+    executeNodeCount: executeNodes.length,
+    mailNodeCount: mailNodes.length,
+    formTriggers: formTriggerNodes.map((node) => ({
+      name: clean(node.name),
+      formTitle: clean(node.parameters?.formTitle),
+      formPath: clean(node.parameters?.options?.path || node.parameters?.options?.formPath || node.parameters?.path || node.parameters?.formPath || node.webhookId),
+    })),
+    webhooks: webhookNodes.map((node) => ({
+      name: clean(node.name),
+      path: clean(node.parameters?.path || node.webhookId),
+      method: clean(node.parameters?.httpMethod || 'POST').toUpperCase(),
+    })),
+    tags: (workflow.tags || []).map((tag) => clean(tag.name || tag)).filter(Boolean),
+  };
+}
+
+const workflowActions = [
+  {
+    id: 'invoice-intake',
+    label: 'Rechnungseingang starten',
+    shortLabel: 'Rechnungseingang',
+    description: 'Neue Rechnungen einlesen, prüfen und Vorschlagsprozess vorbereiten.',
+    workflowName: /^WF1 - Rechnungseingang automatisch mit Claude$/i,
+    preferredTrigger: 'webhook',
+  },
+  {
+    id: 'invoice-approval',
+    label: 'Rechnungsvorschlag bearbeiten',
+    shortLabel: 'Vorschlag prüfen',
+    description: 'Den nächsten offenen Rechnungsvorschlag per Formular freigeben oder ablehnen.',
+    workflowName: /^WF2 - Smart Product Selection - Rechnungsvorschlaege freigeben$/i,
+    preferredTrigger: 'form',
+  },
+  {
+    id: 'sales-fifo',
+    label: 'Nayax-Verkäufe verarbeiten',
+    shortLabel: 'Verkäufe/FIFO',
+    description: 'Nayax-Verkäufe abrufen, FIFO abbuchen und MDB-Kontrollhinweise erzeugen.',
+    workflowName: /^WF3 Nayax Lynx FIFO Lagerbestand - manueller Abruf$/i,
+    preferredTrigger: 'webhook',
+  },
+  {
+    id: 'slot-assignment',
+    label: 'MDB-/Produktzuordnung bearbeiten',
+    shortLabel: 'Slot-Zuordnung',
+    description: 'Produkt-, MDB- und Slotwechsel historisiert prüfen und freigeben.',
+    workflowName: /^WF4 - MDB Produktzuordnung bearbeiten$/i,
+    preferredTrigger: 'form',
+  },
+  {
+    id: 'mhd-stock-check',
+    label: 'MHD & Lagerbestand prüfen',
+    shortLabel: 'MHD-Check',
+    description: 'Kritische MHD-/Restbestandsfälle prüfen, loggen und Mailzusammenfassung senden.',
+    workflowName: /^WF5 - MHD und niedrige Lagercharge ueberwachen$/i,
+    preferredTrigger: 'webhook',
+  },
+];
+
+function workflowEditorUrl(baseUrl, workflowId) {
+  return workflowId ? `${baseUrl}/workflow/${workflowId}` : '';
+}
+
+function firstProductionWebhookUrl(baseUrl, workflow) {
+  const webhook = (workflow.webhooks || []).find((node) => node.path);
+  if (!webhook || !workflow.active) return '';
+  return `${baseUrl}/webhook/${encodeURIComponent(webhook.path)}`;
+}
+
+function firstFormUrl(baseUrl, workflow) {
+  const form = (workflow.formTriggers || []).find((node) => node.formPath);
+  if (!form || !workflow.active) return '';
+  return `${baseUrl}/form/${encodeURIComponent(form.formPath)}`;
+}
+
+function pickWorkflowForAction(workflows, matcher) {
+  const matches = workflows
+    .filter((workflow) => matcher.test(workflow.name))
+    .sort((a, b) => {
+      if (a.active !== b.active) return a.active ? -1 : 1;
+      return new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
+    });
+  return matches[0] || null;
+}
+
+function buildWorkflowActions(n8n) {
+  const baseUrl = n8n.baseUrl || dashboardConfig().n8nBaseUrl;
+  return workflowActions.map((action) => {
+    const workflow = pickWorkflowForAction(n8n.workflows || [], action.workflowName);
+    const editorUrl = workflowEditorUrl(baseUrl, workflow?.id);
+    const webhookUrl = workflow ? firstProductionWebhookUrl(baseUrl, workflow) : '';
+    const formUrl = workflow ? firstFormUrl(baseUrl, workflow) : '';
+    const hasWebhook = Boolean(workflow?.webhooks?.length);
+    const hasForm = Boolean(workflow?.formTriggers?.length);
+    let triggerType = 'unavailable';
+    let runnable = false;
+    let status = 'Workflow nicht gefunden';
+    let primaryUrl = '';
+
+    if (workflow) {
+      status = workflow.active ? 'Workflow gefunden, aber kein externer Trigger konfiguriert' : 'Workflow ist in n8n inaktiv';
+      if (action.preferredTrigger === 'form' && formUrl) {
+        triggerType = 'form';
+        runnable = true;
+        primaryUrl = formUrl;
+        status = 'Formular kann geöffnet werden';
+      } else if (webhookUrl) {
+        triggerType = 'webhook';
+        runnable = true;
+        primaryUrl = webhookUrl;
+        status = 'Webhook kann ausgelöst werden';
+      } else if (hasForm && !workflow.active) {
+        triggerType = 'form';
+        status = 'Form-Trigger vorhanden, aber Workflow ist inaktiv';
+      } else if (hasForm && !formUrl) {
+        triggerType = 'form';
+        status = 'Form-Trigger vorhanden, aber kein fester Form Path gesetzt';
+      } else if (hasWebhook && !workflow.active) {
+        triggerType = 'webhook';
+        status = 'Webhook vorhanden, aber Workflow ist inaktiv';
+      } else if (!hasWebhook && !hasForm) {
+        status = 'Nur manuell/Execute-Trigger: Dashboard-Start braucht Webhook oder Dispatcher';
+      }
+    }
+
+    return {
+      ...action,
+      workflowId: workflow?.id || '',
+      workflowName: workflow?.name || '',
+      workflowActive: Boolean(workflow?.active),
+      triggerType,
+      runnable,
+      status,
+      primaryUrl,
+      editorUrl,
+      formTriggers: workflow?.formTriggers || [],
+      webhooks: workflow?.webhooks || [],
+    };
+  });
+}
+
+async function fetchN8nWorkflows() {
+  const config = dashboardConfig();
+  const base = config.n8nBaseUrl;
+
+  if (!config.n8nApiKey) {
+    return {
+      source: 'n8n_api',
+      baseUrl: base,
+      status: 'missing_api_key',
+      message: 'n8n API ist erreichbar, aber N8N_API_KEY ist im Dashboard nicht gesetzt.',
+      workflows: [],
+    };
+  }
+
+  const response = await fetch(`${base}/api/v1/workflows?limit=100`, {
+    headers: {
+      accept: 'application/json',
+      'X-N8N-API-KEY': config.n8nApiKey,
+    },
+  });
+
+  if (response.status === 401 || response.status === 403) {
+    return {
+      source: 'n8n_api',
+      baseUrl: base,
+      status: 'unauthorized',
+      message: 'n8n API-Key wurde abgelehnt.',
+      workflows: [],
+    };
+  }
+
+  if (!response.ok) {
+    return {
+      source: 'n8n_api',
+      baseUrl: base,
+      status: 'error',
+      message: `n8n API antwortet mit HTTP ${response.status}.`,
+      workflows: [],
+    };
+  }
+
+  const payload = await response.json();
+  const workflowRows = Array.isArray(payload.data)
+    ? payload.data
+    : Array.isArray(payload.workflows)
+      ? payload.workflows
+      : Array.isArray(payload)
+        ? payload
+        : [];
+
+  return {
+    source: 'n8n_api',
+    baseUrl: base,
+    status: 'ok',
+    message: `${workflowRows.length} Workflow(s) live aus n8n gelesen.`,
+    workflows: workflowRows.map(summarizeN8nWorkflow),
+  };
+}
+
+function decodeXml(value) {
+  return clean(value)
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)));
+}
+
+function parseAttrs(tag) {
+  const attrs = {};
+  const re = /([A-Za-z_][\w:.-]*)="([^"]*)"/g;
+  let match;
+  while ((match = re.exec(tag))) {
+    attrs[match[1]] = decodeXml(match[2]);
+  }
+  return attrs;
+}
+
+function columnIndex(ref) {
+  const letters = clean(ref).replace(/[^A-Za-z]/g, '').toUpperCase();
+  let index = 0;
+  for (const letter of letters) {
+    index = index * 26 + (letter.charCodeAt(0) - 64);
+  }
+  return index - 1;
+}
+
+function findEndOfCentralDirectory(buffer) {
+  const min = Math.max(0, buffer.length - 65557);
+  for (let i = buffer.length - 22; i >= min; i -= 1) {
+    if (buffer.readUInt32LE(i) === 0x06054b50) return i;
+  }
+  throw new Error('XLSX ZIP central directory not found');
+}
+
+function readZipEntries(filePath) {
+  const buffer = fs.readFileSync(filePath);
+  const eocd = findEndOfCentralDirectory(buffer);
+  const totalEntries = buffer.readUInt16LE(eocd + 10);
+  const centralOffset = buffer.readUInt32LE(eocd + 16);
+  const entries = new Map();
+  let offset = centralOffset;
+
+  for (let i = 0; i < totalEntries; i += 1) {
+    if (buffer.readUInt32LE(offset) !== 0x02014b50) break;
+    const method = buffer.readUInt16LE(offset + 10);
+    const compressedSize = buffer.readUInt32LE(offset + 20);
+    const fileNameLength = buffer.readUInt16LE(offset + 28);
+    const extraLength = buffer.readUInt16LE(offset + 30);
+    const commentLength = buffer.readUInt16LE(offset + 32);
+    const localOffset = buffer.readUInt32LE(offset + 42);
+    const fileName = buffer.toString('utf8', offset + 46, offset + 46 + fileNameLength);
+    entries.set(fileName, { method, compressedSize, localOffset });
+    offset += 46 + fileNameLength + extraLength + commentLength;
+  }
+
+  return {
+    getText(name) {
+      const entry = entries.get(name);
+      if (!entry) return '';
+      const local = entry.localOffset;
+      if (buffer.readUInt32LE(local) !== 0x04034b50) return '';
+      const fileNameLength = buffer.readUInt16LE(local + 26);
+      const extraLength = buffer.readUInt16LE(local + 28);
+      const dataOffset = local + 30 + fileNameLength + extraLength;
+      const compressed = buffer.subarray(dataOffset, dataOffset + entry.compressedSize);
+      const inflated = entry.method === 8 ? zlib.inflateRawSync(compressed) : compressed;
+      return inflated.toString('utf8');
+    },
+    has(name) {
+      return entries.has(name);
+    },
+  };
+}
+
+function parseSharedStrings(xml) {
+  if (!xml) return [];
+  const values = [];
+  const siRe = /<si\b[^>]*>([\s\S]*?)<\/si>/g;
+  let si;
+  while ((si = siRe.exec(xml))) {
+    const parts = [];
+    const tRe = /<t\b[^>]*>([\s\S]*?)<\/t>/g;
+    let t;
+    while ((t = tRe.exec(si[1]))) {
+      parts.push(decodeXml(t[1]));
+    }
+    values.push(parts.join(''));
+  }
+  return values;
+}
+
+function workbookSheets(zip) {
+  const workbook = zip.getText('xl/workbook.xml');
+  const rels = zip.getText('xl/_rels/workbook.xml.rels');
+  const relMap = {};
+  const relRe = /<Relationship\b([^>]*)\/?>/g;
+  let rel;
+  while ((rel = relRe.exec(rels))) {
+    const attrs = parseAttrs(rel[1]);
+    if (attrs.Id && attrs.Target) relMap[attrs.Id] = attrs.Target;
+  }
+
+  const sheets = [];
+  const sheetRe = /<sheet\b([^>]*)\/?>/g;
+  let sheet;
+  while ((sheet = sheetRe.exec(workbook))) {
+    const attrs = parseAttrs(sheet[1]);
+    const target = relMap[attrs['r:id']];
+    if (!attrs.name || !target) continue;
+    const normalizedTarget = target.startsWith('/') ? target.slice(1) : `xl/${target}`;
+    sheets.push({ name: attrs.name, path: normalizedTarget.replace(/\\/g, '/') });
+  }
+  return sheets;
+}
+
+function parseSheet(xml, sharedStrings) {
+  const rows = [];
+  const rowRe = /<row\b[^>]*>([\s\S]*?)<\/row>/g;
+  let rowMatch;
+  while ((rowMatch = rowRe.exec(xml))) {
+    const row = [];
+    const rowXml = rowMatch[1].replace(/<c\b([^>]*)\/>/g, '<c$1></c>');
+    const cellRe = /<c\b([^>]*)>([\s\S]*?)<\/c>/g;
+    let cellMatch;
+    while ((cellMatch = cellRe.exec(rowXml))) {
+      const attrs = parseAttrs(cellMatch[1]);
+      const index = columnIndex(attrs.r || '');
+      if (index < 0) continue;
+      while (row.length <= index) row.push('');
+
+      let value = '';
+      if (attrs.t === 'inlineStr') {
+        const texts = [];
+        const tRe = /<t\b[^>]*>([\s\S]*?)<\/t>/g;
+        let t;
+        while ((t = tRe.exec(cellMatch[2]))) texts.push(decodeXml(t[1]));
+        value = texts.join('');
+      } else {
+        const v = cellMatch[2].match(/<v\b[^>]*>([\s\S]*?)<\/v>/);
+        value = v ? decodeXml(v[1]) : '';
+        if (attrs.t === 's') value = sharedStrings[Number(value)] ?? '';
+      }
+      row[index] = value;
+    }
+    rows.push(row);
+  }
+
+  if (!rows.length) return [];
+  const headers = rows[0].map(clean);
+  return rows.slice(1).map((row, index) => {
+    const out = { row_number: index + 2 };
+    headers.forEach((header, i) => {
+      if (header) out[header] = row[i] ?? '';
+    });
+    return out;
+  });
+}
+
+function readWorkbook(fileName) {
+  if (!fileName) return { sheets: {}, error: 'Workbook not found', source: 'local_xlsx', fileName: '' };
+  const filePath = path.join(ROOT, fileName);
+  if (!fs.existsSync(filePath)) return { sheets: {}, error: 'Workbook not found' };
+  const zip = readZipEntries(filePath);
+  const sharedStrings = parseSharedStrings(zip.getText('xl/sharedStrings.xml'));
+  const sheets = {};
+  for (const sheet of workbookSheets(zip)) {
+    const xml = zip.getText(sheet.path);
+    sheets[sheet.name] = parseSheet(xml, sharedStrings);
+  }
+  return {
+    sheets,
+    fileName,
+    updatedAt: fs.statSync(filePath).mtime.toISOString(),
+    source: 'local_xlsx',
+    url: '',
+  };
+}
+
+async function fetchLiveSheet(sheetName) {
+  const endpoint = `https://docs.google.com/spreadsheets/d/${googleSheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}&cacheBust=${Date.now()}`;
+  const response = await fetch(endpoint, {
+    redirect: 'follow',
+    headers: {
+      'User-Agent': 'Automatenlager-Dashboard/0.1',
+    },
+  });
+  const text = await response.text();
+  const looksLikeHtml = /^\s*<!doctype html/i.test(text) || /^\s*<html/i.test(text);
+
+  if (!response.ok || looksLikeHtml) {
+    throw new Error(`${sheetName}: Google Sheets CSV nicht erreichbar. Sheet muss fuer Link-Betrachter lesbar sein oder per API angebunden werden.`);
+  }
+
+  return rowsToObjects(parseCsv(text));
+}
+
+async function readGoogleSheetsLive() {
+  const sheets = {};
+  const errors = [];
+
+  for (const sheetName of liveSheetNames) {
+    try {
+      sheets[sheetName] = await fetchLiveSheet(sheetName);
+    } catch (error) {
+      sheets[sheetName] = [];
+      errors.push(error.message);
+    }
+  }
+
+  if (!sheets.Produkte.length || !sheets.Lagerchargen.length) {
+    throw new Error(errors[0] || 'Google Sheets Live-Daten konnten nicht gelesen werden.');
+  }
+
+  return {
+    sheets,
+    fileName: 'Google Sheets live',
+    updatedAt: new Date().toISOString(),
+    source: 'google_sheets_live',
+    url: googleSheetUrl,
+    errors,
+  };
+}
+
+function groupBy(rows, keyFn) {
+  const map = new Map();
+  for (const row of rows) {
+    const key = keyFn(row);
+    if (!key) continue;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(row);
+  }
+  return [...map.entries()].map(([key, items]) => ({ key, items }));
+}
+
+function summarizeWorkbook(workbook) {
+  const products = workbook.sheets.Produkte || [];
+  const batches = workbook.sheets.Lagerchargen || [];
+  const hints = workbook.sheets.Fehler_und_Hinweise || [];
+  const productKeys = new Set(products.map((row) => clean(row.product_key)).filter(Boolean));
+  const productByKey = new Map(products.map((row) => [clean(row.product_key), row]));
+
+  const activeProducts = products.filter((row) => isActive(row.active));
+  const backfillCandidates = activeProducts
+    .filter((row) => clean(row.product_key) && clean(row.machine_id) && clean(row.mdb_code) && !clean(row.product_slot_id))
+    .map((row) => ({
+      row_number: row.row_number,
+      product_key: clean(row.product_key),
+      name: clean(row.nayax_product_name || row.internal_product_name || row.product_key),
+      machine_id: clean(row.machine_id),
+      mdb_code: mdbNorm(row.mdb_code),
+      valid_from: clean(row.valid_from_datetime || row.valid_from),
+      proposed_product_slot_id: productSlotId(row),
+    }));
+
+  const duplicateActiveSlots = groupBy(activeProducts, (row) => `${clean(row.machine_id)}|${mdbNorm(row.mdb_code)}`)
+    .filter((group) => group.items.length > 1)
+    .map((group) => ({
+      slot: group.key.replace('|', ' / MDB '),
+      count: group.items.length,
+      product_keys: group.items.map((row) => clean(row.product_key)).join(', '),
+      rows: group.items.map((row) => row.row_number),
+    }));
+
+  const duplicateProductKeys = groupBy(products, (row) => clean(row.product_key))
+    .filter((group) => group.items.length > 1)
+    .map((group) => ({
+      product_key: group.key,
+      count: group.items.length,
+      rows: group.items.map((row) => row.row_number),
+      active_count: group.items.filter((row) => isActive(row.active)).length,
+    }));
+
+  const activeBatches = batches.filter((row) => ['AKTIV', 'ACTIVE'].includes(clean(row.status).toUpperCase()));
+  const lowBatches = activeBatches.filter((row) => {
+    const remaining = normalizeNumber(row.remaining_qty);
+    return Number.isFinite(remaining) && remaining < 5;
+  });
+
+  const inventoryAlerts = [];
+  for (const batch of lowBatches) {
+    const mhd = parseDate(batch.mhd);
+    if (!mhd) continue;
+    const left = daysUntil(mhd);
+    if (left > 30) continue;
+    const productKey = clean(batch.product_key);
+    const product = productByKey.get(productKey) || {};
+    inventoryAlerts.push({
+      severity: left < 0 ? 'critical' : 'warning',
+      batch_id: clean(batch.batch_id),
+      product_key: productKey,
+      name: clean(product.nayax_product_name || product.internal_product_name || productKey),
+      remaining_qty: clean(batch.remaining_qty),
+      mhd: mhd.toISOString().slice(0, 10),
+      days_left: left,
+      storage_location: clean(batch.storage_location),
+    });
+  }
+
+  const orphanBatches = activeBatches
+    .filter((row) => clean(row.product_key) && !productKeys.has(clean(row.product_key)))
+    .map((row) => ({
+      row_number: row.row_number,
+      batch_id: clean(row.batch_id),
+      product_key: clean(row.product_key),
+      remaining_qty: clean(row.remaining_qty),
+    }));
+
+  const unresolvedHints = hints.filter((row) => !['TRUE', '1', 'JA', 'YES'].includes(clean(row.resolved).toUpperCase()));
+
+  return {
+    fileName: workbook.fileName,
+    updatedAt: workbook.updatedAt,
+    source: workbook.source || 'unknown',
+    url: workbook.url || '',
+    sourceErrors: workbook.errors || [],
+    fallbackReason: workbook.fallbackReason || '',
+    sheets: Object.fromEntries(Object.entries(workbook.sheets).map(([name, rows]) => [name, rows.length])),
+    metrics: {
+      products: products.length,
+      activeProducts: activeProducts.length,
+      activeBatches: activeBatches.length,
+      unresolvedHints: unresolvedHints.length,
+      backfillCandidates: backfillCandidates.length,
+      duplicateActiveSlots: duplicateActiveSlots.length,
+      duplicateProductKeys: duplicateProductKeys.length,
+      lowBatches: lowBatches.length,
+      inventoryAlerts: inventoryAlerts.length,
+      orphanBatches: orphanBatches.length,
+    },
+    backfillCandidates: backfillCandidates.slice(0, 12),
+    duplicateActiveSlots: duplicateActiveSlots.slice(0, 12),
+    duplicateProductKeys: duplicateProductKeys.slice(0, 12),
+    inventoryAlerts: inventoryAlerts.slice(0, 20),
+    orphanBatches: orphanBatches.slice(0, 12),
+  };
+}
+
+async function buildDashboard() {
+  const workflows = workflowFiles
+    .filter((fileName) => fs.existsSync(path.join(ROOT, fileName)))
+    .map(summarizeWorkflow);
+  let n8n;
+  try {
+    n8n = await fetchN8nWorkflows();
+  } catch (error) {
+    n8n = {
+      source: 'n8n_api',
+      baseUrl: dashboardConfig().n8nBaseUrl,
+      status: 'unreachable',
+      message: error.message,
+      workflows: [],
+    };
+  }
+  let workbookSource;
+  try {
+    workbookSource = await readGoogleSheetsLive();
+  } catch (error) {
+    workbookSource = readWorkbook(findLatestWorkbookFile());
+    workbookSource.fallbackReason = error.message;
+  }
+  const workbook = summarizeWorkbook(workbookSource);
+  const allChecks = workflows.flatMap((workflow) => workflow.checks);
+  const actions = buildWorkflowActions(n8n);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    projectRoot: ROOT,
+    workflows,
+    n8n,
+    actions,
+    workbook,
+    overview: {
+      workflowCount: workflows.length,
+      n8nWorkflowCount: n8n.workflows.length,
+      codeModesOk: workflows.every((workflow) => workflow.codeModesOk),
+      checksOk: allChecks.filter((check) => check.ok).length,
+      checksTotal: allChecks.length,
+      dataSource: workbook.source,
+      immediateActions: [
+        workbook.fallbackReason ? `Live-Daten nicht erreichbar: lokale XLSX aktiv` : '',
+        actions.some((action) => action.workflowId && !action.runnable) ? `${actions.filter((action) => action.workflowId && !action.runnable).length} Workflow-Aktion(en) brauchen Webhook/Form-Path/Aktivierung` : '',
+        workbook.metrics.backfillCandidates ? `${workbook.metrics.backfillCandidates} aktive Produktzeilen ohne product_slot_id` : '',
+        workbook.metrics.inventoryAlerts ? `${workbook.metrics.inventoryAlerts} MHD-/Lagerwarnungen` : '',
+        workbook.metrics.duplicateActiveSlots ? `${workbook.metrics.duplicateActiveSlots} doppelte aktive Slotbelegung(en)` : '',
+        workbook.metrics.orphanBatches ? `${workbook.metrics.orphanBatches} Lagercharge(n) ohne Produktstamm` : '',
+      ].filter(Boolean),
+    },
+  };
+}
+
+function sendJson(res, status, data) {
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
+  });
+  res.end(JSON.stringify(data, null, 2));
+}
+
+function sendFile(res, filePath) {
+  if (!filePath.startsWith(PUBLIC_DIR) || !fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+    res.writeHead(404);
+    res.end('Not found');
+    return;
+  }
+
+  const ext = path.extname(filePath).toLowerCase();
+  const types = {
+    '.html': 'text/html; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.json': 'application/json; charset=utf-8',
+  };
+  res.writeHead(200, {
+    'Content-Type': types[ext] || 'application/octet-stream',
+    'Cache-Control': 'no-store',
+  });
+  fs.createReadStream(filePath).pipe(res);
+}
+
+const server = http.createServer(async (req, res) => {
+  const parsed = url.parse(req.url, true);
+  try {
+    if (parsed.pathname === '/api/dashboard') {
+      sendJson(res, 200, await buildDashboard());
+      return;
+    }
+
+    const actionMatch = parsed.pathname.match(/^\/api\/actions\/([^/]+)\/trigger$/);
+    if (actionMatch && req.method === 'POST') {
+      const dashboard = await buildDashboard();
+      const action = dashboard.actions.find((item) => item.id === decodeURIComponent(actionMatch[1]));
+
+      if (!action) {
+        sendJson(res, 404, { ok: false, message: 'Aktion nicht gefunden.' });
+        return;
+      }
+
+      if (!action.runnable) {
+        sendJson(res, 409, { ok: false, action, message: action.status });
+        return;
+      }
+
+      if (action.triggerType === 'form') {
+        sendJson(res, 200, { ok: true, mode: 'open', url: action.primaryUrl, action });
+        return;
+      }
+
+      if (action.triggerType === 'webhook') {
+        const response = await fetch(action.primaryUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            source: 'automatenlager_dashboard',
+            action_id: action.id,
+            workflow_id: action.workflowId,
+            triggered_at: new Date().toISOString(),
+          }),
+        });
+        const text = await response.text();
+        sendJson(res, response.ok ? 200 : 502, {
+          ok: response.ok,
+          mode: 'webhook',
+          status: response.status,
+          response: text.slice(0, 1000),
+          action,
+        });
+        return;
+      }
+
+      sendJson(res, 409, { ok: false, action, message: 'Diese Aktion ist noch nicht auslösbar.' });
+      return;
+    }
+
+    const requestPath = parsed.pathname === '/' ? '/index.html' : parsed.pathname;
+    const filePath = path.normalize(path.join(PUBLIC_DIR, requestPath));
+    sendFile(res, filePath);
+  } catch (error) {
+    sendJson(res, 500, { error: error.message, stack: error.stack });
+  }
+});
+
+server.listen(PORT, () => {
+  console.log(`Automatenlager dashboard running at http://localhost:${PORT}`);
+});

@@ -1,0 +1,21 @@
+# Local secrets
+.env.local
+dashboard/.env.local
+
+# Runtime output
+dashboard/logs/
+*.log
+
+# Dependencies and caches
+node_modules/
+__pycache__/
+*.pyc
+
+# Local one-off helper scripts
+patch_*.py
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

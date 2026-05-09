@@ -1,0 +1,773 @@
+{
+  "name": "WF4 - MDB Produktzuordnung bearbeiten",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "WF4 - MDB Produktzuordnung bearbeiten\n\nZwei Startwege:\n1. Manuell: Nayax-Produktname oder Suchbegriff eingeben.\n2. Aus Verkaufsworkflow: MDB-Abweichung wird vorausgefüllt über Execute Workflow.\n\nVor Produktivbetrieb: Credentials neu setzen, Config prüfen, Spalte product_slot_id ergänzen, nur mit Testdaten starten.",
+        "height": 360,
+        "width": 620,
+        "color": 4
+      },
+      "id": "c3c82fc8-fea3-49ca-85a1-2a0450248319",
+      "name": "Hinweis - Bedienung",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "formTitle": "MDB-/Produktzuordnung suchen",
+        "formDescription": "Gib nur den Nayax-Produktnamen oder einen Suchbegriff ein.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Nayax Produktname oder Suchbegriff",
+              "placeholder": "z. B. Wasser, KitKat Chunky, M&M",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {
+          "buttonLabel": "Zuordnung suchen"
+        }
+      },
+      "id": "2e66dab9-9b28-4307-8ef1-5b5647dcdf2e",
+      "name": "Form Trigger - Nayax Name eingeben",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        80,
+        544
+      ],
+      "webhookId": "d2bc0255-cc86-4293-9830-8afa78daefe7"
+    },
+    {
+      "parameters": {},
+      "id": "417f0012-a9c8-4d7c-ada6-e8b44b721347",
+      "name": "Execute Workflow Trigger - aus Verkaufsworkflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        80,
+        784
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "sheet-id",
+              "name": "google_sheet_id",
+              "value": "12KzLrJzZamaHNwDejQXdyBartHCoCbzN9PFK3tF9pSo",
+              "type": "string"
+            },
+            {
+              "id": "machine-id",
+              "name": "default_machine_id",
+              "value": "457107528",
+              "type": "string"
+            },
+            {
+              "id": "sheet-produkte",
+              "name": "sheet_produkte",
+              "value": "Produkte",
+              "type": "string"
+            },
+            {
+              "id": "sheet-aliase",
+              "name": "sheet_aliase",
+              "value": "Produkt_Aliase",
+              "type": "string"
+            },
+            {
+              "id": "sheet-log",
+              "name": "sheet_produktwechsel_log",
+              "value": "Produktwechsel_Log",
+              "type": "string"
+            },
+            {
+              "id": "sheet-hinweise",
+              "name": "sheet_hinweise",
+              "value": "Fehler_und_Hinweise",
+              "type": "string"
+            },
+            {
+              "id": "timezone",
+              "name": "timezone",
+              "value": "Europe/Berlin",
+              "type": "string"
+            },
+            {
+              "id": "min-score",
+              "name": "min_candidate_score",
+              "value": 45,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "11ee2650-529a-46ef-8d75-11b21ef6d8c8",
+      "name": "Config - WF4",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        368,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $json.google_sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $json.sheet_produkte }}",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "fae87fac-c618-4f8f-aa6a-485a46bee06e",
+      "name": "Google Sheets - Produkte lesen",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        624,
+        672
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "5XfHt3SzjHCj8B5H",
+          "name": "Sheets Automatenlager"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config - WF4').first().json.google_sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $('Config - WF4').first().json.sheet_aliase }}",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "bb03f5e0-fb08-452d-848b-bdbb743ab114",
+      "name": "Google Sheets - Produkt_Aliase lesen",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        880,
+        672
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "5XfHt3SzjHCj8B5H",
+          "name": "Sheets Automatenlager"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const config = $('Config - WF4').first().json;\nconst products = $items('Google Sheets - Produkte lesen').map(i => i.json);\nconst aliases = $items('Google Sheets - Produkt_Aliase lesen').map(i => i.json);\nlet input = {};\ntry { input = $('Form Trigger - Nayax Name eingeben').first().json; } catch(e) {}\ntry { const x = $('Execute Workflow Trigger - aus Verkaufsworkflow').first().json; if (Object.keys(x || {}).length) input = x; } catch(e) {}\n\nfunction clean(v){return String(v ?? '').replace(/\\n/g,' ').replace(/\\s+/g,' ').trim();}\nfunction norm(v){return clean(v).toLowerCase().replace(/&/g,'und').replace(/\\+/g,'plus').replace(/ä/g,'ae').replace(/ö/g,'oe').replace(/ü/g,'ue').replace(/ß/g,'ss').replace(/[^a-z0-9]/g,'');}\nfunction mdbNorm(v){const s=clean(v).replace(',','.'); return /^\\d+\\.0+$/.test(s)?String(parseInt(s,10)):s;}\nfunction toks(v){return [...new Set((norm(v).match(/[a-z]+|[0-9]+/g)||[]).filter(t=>t.length>=2))];}\nfunction parseNayax(raw){ const t=clean(raw); const m=t.match(/^(.*?)\\s*\\((\\d+)\\s*=\\s*([0-9]+(?:[.,][0-9]+)?)\\)\\s*$/); return m ? {label:clean(m[1]),mdb_code:mdbNorm(m[2]),sale_price_eur:clean(m[3]).replace(',','.')} : {label:t,mdb_code:'',sale_price_eur:''}; }\nfunction isActive(row){ const a=clean(row.active).toUpperCase(); return ['TRUE','1','JA','YES'].includes(a) && !clean(row.valid_to_datetime || row.valid_to); }\nfunction score(p,q){ const qq=norm(q); const txt=[p.product_key,p.internal_product_name,p.nayax_product_name,p.mdb_code,p.machine_id].map(clean).join(' '); const pp=norm(txt); let s=0; if(qq&&pp===qq)s+=95; if(qq&&pp.includes(qq))s+=70; const pt=toks(txt); s+=toks(q).filter(t=>pt.includes(t)).length*12; if(isActive(p)||clean(p.active)==='')s+=5; return Math.min(s,99); }\n\nconst searchRaw=clean(input['Nayax Produktname oder Suchbegriff']||input.nayax_product_name||input.raw_product_name||input.product_name||input.search);\nconst parsed=parseNayax(searchRaw);\nconst search=clean(input.product_label||parsed.label||searchRaw);\nconst machineId=clean(input.machine_id||config.default_machine_id);\nconst actualMdb=mdbNorm(input.actual_mdb_code||input.new_mdb_code||input.mdb_code||parsed.mdb_code);\nconst expectedMdb=mdbNorm(input.expected_mdb_code||input.old_mdb_code);\nconst suggestedProductKey=clean(input.product_key||input.suggested_product_key);\nconst settlement=clean(input.settlement_datetime_gmt||input.sale_datetime_utc);\nconst detectedReason=clean(input.detected_reason||'');\nconst defaultChangeType=clean(input.suggested_change_type)||(expectedMdb&&actualMdb&&expectedMdb!==actualMdb?'Produkt auf anderen MDB-Slot umziehen':'Produkt im Slot austauschen');\nif(!search && !suggestedProductKey) throw new Error('Kein Suchbegriff und kein product_key vorhanden.');\n\nconst aliasHits=aliases.filter(a=>{const al=clean(a.alias_name||a.source_item); return al && norm(al) && (norm(al)===norm(search)||norm(search).includes(norm(al))||norm(al).includes(norm(search)));});\nlet ranked=products.map(p=>{let s=score(p,search); if(suggestedProductKey&&clean(p.product_key)===suggestedProductKey)s+=100; if(aliasHits.some(a=>clean(a.product_key)===clean(p.product_key)))s+=45; if(actualMdb&&clean(p.machine_id)===machineId&&mdbNorm(p.mdb_code)===actualMdb)s+=15; return {product:p,score:Math.min(s,99)};}).filter(x=>clean(x.product.product_key)&&x.score>=Number(config.min_candidate_score||45)).sort((a,b)=>b.score-a.score).slice(0,5);\nif(!ranked.length && suggestedProductKey) ranked=products.filter(p=>clean(p.product_key)===suggestedProductKey).map(p=>({product:p,score:99}));\n\nconst active=products.filter(p=>clean(p.machine_id)===machineId && isActive(p));\nconst activeOnActualMdb=actualMdb?active.filter(p=>mdbNorm(p.mdb_code)===actualMdb):[];\nconst activeOnExpectedMdb=expectedMdb?active.filter(p=>mdbNorm(p.mdb_code)===expectedMdb):[];\nconst activeSameProduct=suggestedProductKey?active.filter(p=>clean(p.product_key)===suggestedProductKey):(ranked.length?active.filter(p=>clean(p.product_key)===clean(ranked[0].product.product_key)):[]);\nconst baseRows=suggestedProductKey?products.filter(p=>clean(p.product_key)===suggestedProductKey && !clean(p.product_slot_id) && !clean(p.machine_id) && !clean(p.mdb_code)): (ranked.length?products.filter(p=>clean(p.product_key)===clean(ranked[0].product.product_key) && !clean(p.product_slot_id) && !clean(p.machine_id) && !clean(p.mdb_code)) : []);\n\nconst candText=ranked.length?ranked.map((x,i)=>`${i+1} = ${clean(x.product.product_key)} | ${clean(x.product.internal_product_name||x.product.nayax_product_name)} | MDB ${mdbNorm(x.product.mdb_code)||'-'} | Treffer ${x.score}%`).join('\\n'):'Keine Kandidaten gefunden. Bitte abbrechen und Produkt zuerst im Stammdatenprozess anlegen.';\nconst slotText=[\n  activeOnActualMdb.length?`Aktiv auf MDB neu/ist ${actualMdb}: ${activeOnActualMdb.map(p=>`${clean(p.product_key)} / ${clean(p.internal_product_name||p.nayax_product_name)}`).join('; ')}`:(actualMdb?`Aktiv auf MDB neu/ist ${actualMdb}: keine aktive Zeile gefunden`:'MDB neu/ist: nicht erkannt'),\n  activeOnExpectedMdb.length?`Aktiv auf MDB alt/erwartet ${expectedMdb}: ${activeOnExpectedMdb.map(p=>`${clean(p.product_key)} / ${clean(p.internal_product_name||p.nayax_product_name)}`).join('; ')}`:(expectedMdb?`Aktiv auf MDB alt/erwartet ${expectedMdb}: keine aktive Zeile gefunden`:'MDB alt/erwartet: nicht angegeben'),\n  activeSameProduct.length?`Aktive Slots desselben Produkts: ${activeSameProduct.map(p=>`MDB ${mdbNorm(p.mdb_code)} (${clean(p.product_key)})`).join(', ')}`:'Aktive Slots desselben Produkts: keine oder unklar',\n  baseRows.length?`Slotlose WF2-Basiszeilen fuer Produkt: ${baseRows.length}`:'Slotlose WF2-Basiszeilen fuer Produkt: keine'\n].join('\\n');\n\nconst defaultValidFrom=settlement||new Date().toISOString();\nconst formInfo=['MDB-/Produktzuordnung prüfen','',`Quelle: ${detectedReason||(input.source||'manueller Start')}`,`Maschine: ${machineId}`,`Suchbegriff/Nayax-Name: ${searchRaw||search}`,`Bereinigter Produktname: ${search}`,`MDB alt/erwartet: ${expectedMdb||'(leer)'}`,`MDB neu/ist: ${actualMdb||'(leer)'}`,`Gültig ab Vorschlag: ${defaultValidFrom}`,'','Slotstatus:',slotText,'','Produktkandidaten:',candText,'','Hinweis:','WF4 ergänzt vorhandene slotlose WF2-Produktzeilen, wenn genau eine passende Basiszeile existiert.'].join('\\n');\n\nreturn [{json:{\n  source:clean(input.source||'manual_or_sales_workflow'),\n  detected_reason:detectedReason,\n  machine_id:machineId,\n  search_raw:searchRaw,\n  search_label:search,\n  parsed_mdb_code:parsed.mdb_code,\n  parsed_sale_price_eur:parsed.sale_price_eur,\n  expected_mdb_code:expectedMdb,\n  actual_mdb_code:actualMdb,\n  default_valid_from_utc:defaultValidFrom,\n  default_change_type_de:defaultChangeType,\n  default_current_machine_qty:clean(input.current_machine_qty||input.current_machine_qty_after_change),\n  default_machine_capacity:clean(input.machine_capacity),\n  default_target_stock:clean(input.target_stock),\n  default_min_stock:clean(input.min_stock),\n  candidates:ranked.map((x,i)=>({number:String(i+1),score:x.score,product_key:clean(x.product.product_key),internal_product_name:clean(x.product.internal_product_name),nayax_product_name:clean(x.product.nayax_product_name),mdb_code:mdbNorm(x.product.mdb_code),machine_id:clean(x.product.machine_id),product_slot_id:clean(x.product.product_slot_id),sale_price_eur:clean(x.product.sale_price_eur)})),\n  active_on_actual_mdb:activeOnActualMdb,\n  active_on_expected_mdb:activeOnExpectedMdb,\n  active_same_product:activeSameProduct,\n  base_product_rows:baseRows,\n  form_info:formInfo\n}}];",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "b9cbacf7-705e-4310-9afe-8b3154951aeb",
+      "name": "Code - Produktwechsel vorbereiten",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1168,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Vorschlag",
+              "fieldType": "textarea",
+              "defaultValue": "={{ $json.form_info }}"
+            },
+            {
+              "fieldLabel": "Freigabe",
+              "placeholder": "JA oder ABBRECHEN",
+              "defaultValue": "JA",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Änderungsart",
+              "placeholder": "Produkt im Slot austauschen / Produkt auf anderen MDB-Slot umziehen / Produkt zusätzlich auf weiteren Slot legen / Produkt aus Slot entfernen / Nur Stammdaten korrigieren / Bestand korrigieren ohne Produktwechsel",
+              "defaultValue": "={{ $json.default_change_type_de }}",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Produktwahl",
+              "placeholder": "1, 2, 3, 4, 5 oder ABLEHNEN",
+              "defaultValue": "1",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "MDB-Code alt",
+              "defaultValue": "={{ $json.expected_mdb_code }}"
+            },
+            {
+              "fieldLabel": "MDB-Code neu",
+              "defaultValue": "={{ $json.actual_mdb_code || $json.parsed_mdb_code }}"
+            },
+            {
+              "fieldLabel": "Gültig ab UTC",
+              "placeholder": "z. B. 2026-05-06T10:30:00Z",
+              "defaultValue": "={{ $json.default_valid_from_utc }}",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Aktueller Maschinenbestand nach Änderung",
+              "fieldType": "number",
+              "defaultValue": "={{ $json.default_current_machine_qty }}"
+            },
+            {
+              "fieldLabel": "Slot-Kapazität",
+              "fieldType": "number",
+              "defaultValue": "={{ $json.default_machine_capacity }}"
+            },
+            {
+              "fieldLabel": "Zielbestand",
+              "fieldType": "number",
+              "defaultValue": "={{ $json.default_target_stock }}"
+            },
+            {
+              "fieldLabel": "Mindestbestand",
+              "fieldType": "number",
+              "defaultValue": "={{ $json.default_min_stock }}"
+            },
+            {
+              "fieldLabel": "Notiz",
+              "fieldType": "textarea"
+            }
+          ]
+        },
+        "options": {
+          "formTitle": "MDB-/Produktzuordnung prüfen",
+          "formDescription": "Prüfe den Vorschlag. Werte sind vorausgefüllt und können überschrieben werden.",
+          "buttonLabel": "Änderung verarbeiten"
+        }
+      },
+      "id": "31fb3bae-9248-43cb-8aca-dde7735310d4",
+      "name": "Form - MDB Aenderung pruefen",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 1,
+      "position": [
+        1440,
+        672
+      ],
+      "webhookId": "57da7d86-ba42-4dec-a4ea-3a0cf47b3a15"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prepared = $('Code - Produktwechsel vorbereiten').first().json;\nconst form = $input.first().json;\nconst config = $('Config - WF4').first().json;\nconst products = $items('Google Sheets - Produkte lesen').map(i => i.json);\n\nfunction clean(v){return String(v ?? '').replace(/\\n/g,' ').replace(/\\s+/g,' ').trim();}\nfunction norm(v){return clean(v).toLowerCase().replace(/&/g,'und').replace(/\\+/g,'plus').replace(/ä/g,'ae').replace(/ö/g,'oe').replace(/ü/g,'ue').replace(/ß/g,'ss').replace(/[^a-z0-9]/g,'');}\nfunction mdbNorm(v){const s=clean(v).replace(',','.'); return /^\\d+\\.0+$/.test(s)?String(parseInt(s,10)):s;}\nfunction iso(v){const d=new Date(clean(v)||new Date().toISOString()); if(Number.isNaN(d.getTime())) throw new Error('Gültig ab UTC ist kein valides Datum/Zeitformat: '+clean(v)); return d.toISOString();}\nfunction stamp(v){return clean(v).replace(/[-:]/g,'').replace(/\\.\\d+Z$/,'Z');}\nfunction psid(machineId,mdb,pk,from){return `PS_${clean(machineId)}_${mdbNorm(mdb)}_${clean(pk)}_${stamp(from)}`;}\nfunction first(...vals){return vals.map(clean).find(v=>v!=='')||'';}\nfunction isActive(row){const a=clean(row.active).toUpperCase(); return ['TRUE','1','JA','YES'].includes(a) && !clean(row.valid_to_datetime || row.valid_to);}\nfunction hasSlotData(row){return !!(clean(row.product_slot_id)||clean(row.machine_id)||clean(row.mdb_code)||clean(row.valid_from_datetime)||clean(row.valid_from));}\nfunction productName(row){return first(row.internal_product_name,row.nayax_product_name,row.product_key);}\nfunction warning(type,severity,message,productKey=''){warningRows.push({created_at:now,type,severity,machine_id:machineId,product_key:productKey||selectedProductKey,nayax_product_name:selectedName,message,resolved:'FALSE',change_id:changeId});}\n\nconst now=new Date().toISOString();\nconst machineId=clean(prepared.machine_id||config.default_machine_id);\nconst oldMdb=mdbNorm(form['MDB-Code alt']||prepared.expected_mdb_code);\nconst newMdb=mdbNorm(form['MDB-Code neu']||prepared.actual_mdb_code||prepared.parsed_mdb_code);\nconst validFromUtc=iso(form['Gültig ab UTC']||prepared.default_valid_from_utc);\nconst note=clean(form.Notiz);\nconst choice=clean(form.Produktwahl).toUpperCase();\nconst changeTypeDe=clean(form['Änderungsart']);\nconst map={ [norm('Produkt im Slot austauschen')]:'REPLACE_SLOT', [norm('Produkt auf anderen MDB-Slot umziehen')]:'MOVE_PRODUCT', [norm('Produkt zusätzlich auf weiteren Slot legen')]:'ADD_ADDITIONAL_SLOT', [norm('Produkt aus Slot entfernen')]:'REMOVE_PRODUCT', [norm('Nur Stammdaten korrigieren')]:'CORRECT_METADATA', [norm('Bestand korrigieren ohne Produktwechsel')]:'STOCK_CORRECTION' };\nconst changeTypeInternal=map[norm(changeTypeDe)];\nif(!changeTypeInternal) throw new Error('Unbekannte Änderungsart. Bitte exakt einen vorgeschlagenen deutschen Wert verwenden.');\n\nconst selected=prepared.candidates.find(c=>c.number===choice);\nconst isRejected=norm(form.Freigabe)!=='ja'||choice==='ABLEHNEN'||choice==='REJECT';\nconst closeRows=[],newRows=[],baseRowUpdates=[],warningRows=[],logRows=[];\nconst selectedProductKey=selected?clean(selected.product_key):'';\nconst selectedName=selected?first(selected.internal_product_name,selected.nayax_product_name):'';\nconst changeId=`CHG_${machineId}_${oldMdb||'NA'}_${newMdb||'NA'}_${selectedProductKey||'NO_PRODUCT'}_${stamp(validFromUtc)}`;\n\nif(isRejected){\n  logRows.push({change_id:changeId,changed_at_utc:now,source:prepared.source,detected_reason:prepared.detected_reason,machine_id:machineId,old_mdb_code:oldMdb,new_mdb_code:newMdb,new_product_key:selectedProductKey,new_product_name:selectedName,change_type_de:changeTypeDe,change_type_internal:changeTypeInternal,valid_from_utc:validFromUtc,status:'abgelehnt',action_required:'FALSE',notes:note||'Im Formular abgelehnt.'});\n  return [{json:{closeRows,newRows,baseRowUpdates,warningRows,logRows,summary:{status:'abgelehnt',change_id:changeId}}}];\n}\n\nif(!newMdb && ['REPLACE_SLOT','MOVE_PRODUCT','ADD_ADDITIONAL_SLOT'].includes(changeTypeInternal)) throw new Error('MDB-Code neu fehlt.');\nif(!selectedProductKey && !['REMOVE_PRODUCT','STOCK_CORRECTION'].includes(changeTypeInternal)) throw new Error('Kein Produkt ausgewählt.');\n\nconst activeRows=products.filter(p=>clean(p.machine_id)===machineId && isActive(p));\nconst activeOnNew=activeRows.filter(p=>mdbNorm(p.mdb_code)===newMdb);\nconst activeOnOld=oldMdb?activeRows.filter(p=>mdbNorm(p.mdb_code)===oldMdb):[];\nconst activeSameProduct=activeRows.filter(p=>clean(p.product_key)===selectedProductKey);\nconst exactActive=activeRows.filter(p=>mdbNorm(p.mdb_code)===newMdb && clean(p.product_key)===selectedProductKey);\nconst baseRows=products.filter(p=>clean(p.product_key)===selectedProductKey && !hasSlotData(p));\n\nfunction close(row,reason){\n  return {product_slot_id:clean(row.product_slot_id),product_key:clean(row.product_key),machine_id:clean(row.machine_id||machineId),mdb_code:mdbNorm(row.mdb_code),active:'FALSE',valid_to_datetime:validFromUtc,valid_to:validFromUtc,last_change_id:changeId,notes:[clean(row.notes),reason,note].filter(Boolean).join(' | ')};\n}\n\nfunction slotFields(product,mdb){\n  return {\n    product_slot_id:psid(machineId,mdb,product.product_key,validFromUtc),\n    product_key:product.product_key,\n    machine_id:machineId,\n    mdb_code:mdbNorm(mdb),\n    nayax_product_name:product.nayax_product_name||product.internal_product_name,\n    internal_product_name:product.internal_product_name||product.nayax_product_name,\n    sale_price_eur:product.sale_price_eur||'',\n    valid_from_datetime:validFromUtc,\n    valid_from:validFromUtc,\n    valid_to_datetime:'',\n    valid_to:'',\n    active:'TRUE',\n    replenishment_status:'',\n    min_stock:clean(form.Mindestbestand),\n    target_stock:clean(form.Zielbestand),\n    current_machine_qty:clean(form['Aktueller Maschinenbestand nach Änderung']),\n    machine_capacity:clean(form['Slot-Kapazität']),\n    stock_source:'WF4_MDB_Produktwechsel',\n    last_change_id:changeId,\n    notes:note\n  };\n}\n\nfunction setSlot(product,mdb){\n  if(exactActive.length){\n    warning('WF4_SLOT_ALREADY_ACTIVE','info',`Aktive Slotzeile existiert bereits fuer machine_id=${machineId}, mdb=${mdbNorm(mdb)}, product_key=${selectedProductKey}. Es wurde keine neue Produktzeile erzeugt.`);\n    return;\n  }\n\n  if(baseRows.length > 1){\n    warning('WF4_DUPLICATE_BASE_PRODUCT_ROWS','error',`Mehrere slotlose WF2-Produktzeilen fuer product_key=${selectedProductKey} gefunden. Bitte zuerst bereinigen; WF4 erzeugt keine weitere Dublette.`);\n    return;\n  }\n\n  const fields=slotFields(product,mdb);\n  if(baseRows.length === 1){\n    baseRowUpdates.push(fields);\n  } else {\n    newRows.push(fields);\n  }\n}\n\nif(changeTypeInternal==='MOVE_PRODUCT'){\n  const rowsToClose=oldMdb?activeSameProduct.filter(r=>mdbNorm(r.mdb_code)===oldMdb):activeSameProduct.filter(r=>mdbNorm(r.mdb_code)!==newMdb);\n  for(const r of rowsToClose) closeRows.push(close(r,'WF4: Produkt auf anderen MDB-Slot umgezogen.'));\n  setSlot(selected,newMdb);\n}\n\nif(changeTypeInternal==='REPLACE_SLOT'){\n  for(const r of activeOnNew.filter(r=>clean(r.product_key)!==selectedProductKey)) closeRows.push(close(r,'WF4: Produkt im Slot ausgetauscht.'));\n  setSlot(selected,newMdb);\n}\n\nif(changeTypeInternal==='ADD_ADDITIONAL_SLOT'){\n  const blockers=activeOnNew.filter(r=>clean(r.product_key)!==selectedProductKey);\n  if(blockers.length){\n    warning('WF4_TARGET_SLOT_OCCUPIED','error',`MDB ${newMdb} ist bereits aktiv belegt. Fuer zusätzlichen Slot bitte anderen MDB-Code wählen oder Produkttausch verwenden.`);\n  } else {\n    setSlot(selected,newMdb);\n  }\n}\n\nif(changeTypeInternal==='REMOVE_PRODUCT'){\n  const rows=activeOnNew.length?activeOnNew:activeOnOld;\n  for(const r of rows) closeRows.push(close(r,'WF4: Produkt aus Slot entfernt.'));\n}\n\nif(changeTypeInternal==='CORRECT_METADATA') warning('WF4_METADATA_CORRECTION_NOT_AUTOMATED','warning','Nur Stammdaten korrigieren gewählt. Diese Version protokolliert nur.');\nif(changeTypeInternal==='STOCK_CORRECTION') warning('WF4_STOCK_CORRECTION_REQUESTED','action_required','Bestand korrigieren ohne Produktwechsel gewählt. Bitte Bestandskorrekturworkflow verwenden.');\n\nfor(const r of closeRows) if(!clean(r.product_slot_id)) warning('MISSING_PRODUCT_SLOT_ID','error',`Alte Produktzeile konnte nicht sicher geschlossen werden, weil product_slot_id fehlt. product_key=${r.product_key}, mdb=${r.mdb_code}`,r.product_key);\n\nconst hasError=warningRows.some(w=>clean(w.severity)==='error');\nif(hasError){\n  newRows.length=0;\n  baseRowUpdates.length=0;\n}\n\nlogRows.push({change_id:changeId,changed_at_utc:now,source:prepared.source,detected_reason:prepared.detected_reason,machine_id:machineId,old_mdb_code:oldMdb,new_mdb_code:newMdb,old_product_key:closeRows.map(r=>r.product_key).join('; '),new_product_key:selectedProductKey,new_product_name:selectedName,change_type_de:changeTypeDe,change_type_internal:changeTypeInternal,valid_from_utc:validFromUtc,status:hasError?'mit_fehler':'verarbeitet',action_required:warningRows.length?'TRUE':'FALSE',notes:note});\n\nreturn [{json:{closeRows,newRows,baseRowUpdates,warningRows,logRows,summary:{status:hasError?'mit_fehler':'verarbeitet',change_id:changeId,close_rows:closeRows.length,new_rows:newRows.length,base_row_updates:baseRowUpdates.length,warnings:warningRows.length}}}];",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "39bcfcbe-bc27-469c-8eb5-38edc236ddf4",
+      "name": "Code - Entscheidung auswerten",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1728,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return ($input.first().json.closeRows || []).filter(r => r.product_slot_id).map(r => ({ json: r }));",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "581d1cda-e8c2-4cea-a999-b1024eab5eea",
+      "name": "Extract - Alte Produktzeilen schließen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        384
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return ($input.first().json.newRows || []).map(r => ({ json: r }));",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "7e77d2d2-09fb-434e-a8da-ea50d057c7c1",
+      "name": "Extract - Neue Produktzeilen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return ($input.first().json.warningRows || []).map(r => ({ json: r }));",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "faea16ba-d1a3-4ea0-adfb-02b7ba1f8ec6",
+      "name": "Extract - Hinweise",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        784
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return ($input.first().json.logRows || []).map(r => ({ json: r }));",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "a80a1269-2c48-4a4f-9b00-693724274bf2",
+      "name": "Extract - Produktwechsel Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        992
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config - WF4').first().json.google_sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $('Config - WF4').first().json.sheet_produkte }}",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "product_slot_id": "={{ $json.product_slot_id }}",
+            "active": "={{ $json.active }}",
+            "valid_to_datetime": "={{ $json.valid_to_datetime }}",
+            "valid_to": "={{ $json.valid_to }}",
+            "last_change_id": "={{ $json.last_change_id }}",
+            "notes": "={{ $json.notes }}"
+          },
+          "matchingColumns": [
+            "product_slot_id"
+          ],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "09bab850-7a27-4d7c-9f40-8d120714cbf9",
+      "name": "Google Sheets - Alte Produktzeilen schließen",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2288,
+        384
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "5XfHt3SzjHCj8B5H",
+          "name": "Sheets Automatenlager"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config - WF4').first().json.google_sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $('Config - WF4').first().json.sheet_produkte }}",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "0577ef93-f86b-40f1-a67c-c53440ed9dc6",
+      "name": "Google Sheets - Neue Produktzeilen anlegen",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2288,
+        592
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "5XfHt3SzjHCj8B5H",
+          "name": "Sheets Automatenlager"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config - WF4').first().json.google_sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $('Config - WF4').first().json.sheet_hinweise }}",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "dff97334-400d-4f37-9821-acf58598e23e",
+      "name": "Google Sheets - Hinweise anhängen",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2288,
+        784
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "5XfHt3SzjHCj8B5H",
+          "name": "Sheets Automatenlager"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config - WF4').first().json.google_sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $('Config - WF4').first().json.sheet_produktwechsel_log }}",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "89b09b59-685b-48b4-a04a-d23021f9f83b",
+      "name": "Google Sheets - Produktwechsel_Log anhängen",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2288,
+        992
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "5XfHt3SzjHCj8B5H",
+          "name": "Sheets Automatenlager"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "completionTitle": "MDB-/Produktänderung verarbeitet",
+        "completionMessage": "Die Änderung wurde verarbeitet oder als Log/Hinweis gespeichert. Bitte prüfe Produktwechsel_Log und Fehler_und_Hinweise.",
+        "options": {}
+      },
+      "id": "7dd0c2f1-ca26-4112-8c45-6b28790018d3",
+      "name": "Form Ending - Abschluss",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 1,
+      "position": [
+        2560,
+        992
+      ],
+      "webhookId": "cb450536-9708-44ab-8867-699ae7393ac0"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return ($input.first().json.baseRowUpdates || []).map(r => ({ json: r }));"
+      },
+      "id": "229e73ac-a4e6-4d07-a2ba-c9b4d1cf733f",
+      "name": "Extract - Vorhandene Produktzeilen ergänzen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config - WF4').first().json.google_sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $('Config - WF4').first().json.sheet_produkte }}",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "product_key": "={{ $json.product_key }}",
+            "product_slot_id": "={{ $json.product_slot_id }}",
+            "machine_id": "={{ $json.machine_id }}",
+            "mdb_code": "={{ $json.mdb_code }}",
+            "active": "={{ $json.active }}",
+            "valid_from_datetime": "={{ $json.valid_from_datetime }}",
+            "valid_from": "={{ $json.valid_from }}",
+            "valid_to_datetime": "={{ $json.valid_to_datetime }}",
+            "valid_to": "={{ $json.valid_to }}",
+            "current_machine_qty": "={{ $json.current_machine_qty }}",
+            "machine_capacity": "={{ $json.machine_capacity }}",
+            "target_stock": "={{ $json.target_stock }}",
+            "min_stock": "={{ $json.min_stock }}",
+            "stock_source": "={{ $json.stock_source }}",
+            "last_change_id": "={{ $json.last_change_id }}",
+            "notes": "={{ $json.notes }}"
+          },
+          "matchingColumns": [
+            "product_key"
+          ],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "735078b1-4c3b-448d-9323-917d5c7dd258",
+      "name": "Google Sheets - Vorhandene Produktzeilen ergänzen",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2288,
+        176
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "5XfHt3SzjHCj8B5H",
+          "name": "Sheets Automatenlager"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Form Trigger - Nayax Name eingeben": {
+      "main": [
+        [
+          {
+            "node": "Config - WF4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Workflow Trigger - aus Verkaufsworkflow": {
+      "main": [
+        [
+          {
+            "node": "Config - WF4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config - WF4": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets - Produkte lesen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets - Produkte lesen": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets - Produkt_Aliase lesen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets - Produkt_Aliase lesen": {
+      "main": [
+        [
+          {
+            "node": "Code - Produktwechsel vorbereiten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Produktwechsel vorbereiten": {
+      "main": [
+        [
+          {
+            "node": "Form - MDB Aenderung pruefen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Form - MDB Aenderung pruefen": {
+      "main": [
+        [
+          {
+            "node": "Code - Entscheidung auswerten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Entscheidung auswerten": {
+      "main": [
+        [
+          {
+            "node": "Extract - Alte Produktzeilen schließen",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Extract - Vorhandene Produktzeilen ergänzen",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Extract - Neue Produktzeilen",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Extract - Hinweise",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Extract - Produktwechsel Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract - Alte Produktzeilen schließen": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets - Alte Produktzeilen schließen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract - Neue Produktzeilen": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets - Neue Produktzeilen anlegen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract - Hinweise": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets - Hinweise anhängen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract - Produktwechsel Log": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets - Produktwechsel_Log anhängen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets - Produktwechsel_Log anhängen": {
+      "main": [
+        [
+          {
+            "node": "Form Ending - Abschluss",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract - Vorhandene Produktzeilen ergänzen": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets - Vorhandene Produktzeilen ergänzen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "fe6025ec-d6ef-46a2-96d5-8505c463f5b8",
+  "meta": {
+    "instanceId": "436e48b4989df60636199a0b3597a57e91e68cd7883152d5895761ecc592158a"
+  },
+  "id": "z8O2ExZWeQZVepbt",
+  "tags": []
+}

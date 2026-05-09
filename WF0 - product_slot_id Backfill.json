@@ -1,0 +1,246 @@
+{
+  "name": "WF0 - product_slot_id Backfill",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "1b7e5353-3dd2-4bda-979c-7c9baf4fea81",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -560,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "google_sheet_id",
+              "name": "google_sheet_id",
+              "value": "12KzLrJzZamaHNwDejQXdyBartHCoCbzN9PFK3tF9pSo",
+              "type": "string"
+            },
+            {
+              "id": "sheet_produkte",
+              "name": "sheet_produkte",
+              "value": "Produkte",
+              "type": "string"
+            },
+            {
+              "id": "max_updates",
+              "name": "max_updates",
+              "value": 2,
+              "type": "number"
+            },
+            {
+              "id": "timezone",
+              "name": "timezone",
+              "value": "Europe/Berlin",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "00700af9-9525-4921-871d-ee9903cc101f",
+      "name": "Config - WF0",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -320,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config - WF0').first().json.google_sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $('Config - WF0').first().json.sheet_produkte }}",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "e2a8f969-444f-4217-814d-987ba5e97697",
+      "name": "Google Sheets - Produkte lesen",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -80,
+        240
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "5XfHt3SzjHCj8B5H",
+          "name": "Sheets Automatenlager"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const config = $('Config - WF0').first().json;\nconst rows = $items('Google Sheets - Produkte lesen').map(i => i.json);\nconst maxUpdatesRaw = Number(config.max_updates ?? 2);\nconst maxUpdates = Number.isFinite(maxUpdatesRaw) ? maxUpdatesRaw : 2;\n\nfunction clean(v) {\n  return String(v ?? '').replace(/\\n/g, ' ').replace(/\\s+/g, ' ').trim();\n}\n\nfunction mdbNorm(v) {\n  const s = clean(v).replace(',', '.');\n  return /^\\d+\\.0+$/.test(s) ? String(parseInt(s, 10)) : s;\n}\n\nfunction isActive(v) {\n  const a = clean(v).toUpperCase();\n  return ['TRUE', '1', 'JA', 'YES', 'AKTIV', 'ACTIVE'].includes(a);\n}\n\nfunction stamp(v) {\n  const raw = clean(v);\n\n  if (!raw) {\n    return `BACKFILL_${new Date().toISOString()\n      .replace(/[-:]/g, '')\n      .replace(/\\.\\d+Z$/, 'Z')}`;\n  }\n\n  const d = new Date(raw);\n\n  if (!Number.isNaN(d.getTime())) {\n    return d.toISOString()\n      .replace(/[-:]/g, '')\n      .replace(/\\.\\d+Z$/, 'Z');\n  }\n\n  return raw\n    .replace(/[^A-Za-z0-9]/g, '')\n    .slice(0, 30);\n}\n\nfunction productSlotId(row) {\n  return [\n    'PS',\n    clean(row.machine_id),\n    mdbNorm(row.mdb_code),\n    clean(row.product_key),\n    stamp(row.valid_from_datetime || row.valid_from)\n  ].join('_');\n}\n\nfunction rowNumber(row) {\n  return clean(row.row_number || row.rowNumber || row.__rowNumber);\n}\n\nconst updates = [];\n\nfor (const row of rows) {\n  const productKey = clean(row.product_key);\n  const machineId = clean(row.machine_id);\n  const mdbCode = mdbNorm(row.mdb_code);\n  const slotId = clean(row.product_slot_id);\n  const rn = rowNumber(row);\n\n  if (!productKey || !machineId || !mdbCode || !rn) continue;\n  if (!isActive(row.active)) continue;\n  if (slotId) continue;\n\n  updates.push({\n    json: {\n      row_number: rn,\n      product_key: productKey,\n      machine_id: machineId,\n      mdb_code: mdbCode,\n      product_slot_id: productSlotId(row),\n      last_change_id: 'BACKFILL_PRODUCT_SLOT_ID',\n      notes: [\n        clean(row.notes),\n        'product_slot_id per Backfill erzeugt.'\n      ].filter(Boolean).join(' | ')\n    }\n  });\n}\n\nif (maxUpdates > 0) {\n  return updates.slice(0, maxUpdates);\n}\n\nreturn updates;"
+      },
+      "id": "0ebbd4d0-7684-4402-b375-f60261d650f2",
+      "name": "Code - Fehlende product_slot_id erzeugen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config - WF0').first().json.google_sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $('Config - WF0').first().json.sheet_produkte }}",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $json.row_number }}",
+            "product_slot_id": "={{ $json.product_slot_id }}",
+            "last_change_id": "={{ $json.last_change_id }}",
+            "notes": "={{ $json.notes }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            },
+            {
+              "id": "product_slot_id",
+              "displayName": "product_slot_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "last_change_id",
+              "displayName": "last_change_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "notes",
+              "displayName": "notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "420f459b-3c93-45c4-aae1-aa8a9b7d0311",
+      "name": "Google Sheets - product_slot_id aktualisieren",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        432,
+        240
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "5XfHt3SzjHCj8B5H",
+          "name": "Sheets Automatenlager"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Config - WF0",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config - WF0": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets - Produkte lesen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets - Produkte lesen": {
+      "main": [
+        [
+          {
+            "node": "Code - Fehlende product_slot_id erzeugen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Fehlende product_slot_id erzeugen": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets - product_slot_id aktualisieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timezone": "Europe/Berlin"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2026-05-07T00:00:00.000Z",
+  "versionId": "cc9aba53-e1c1-42d8-904e-049b2a329262",
+  "active": false
+}

@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Automatenlager Leitstand</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">AL</div>
+          <div>
+            <div class="brand-title">Automatenlager</div>
+            <div class="brand-subtitle">n8n Leitstand</div>
+          </div>
+        </div>
+
+        <nav class="nav-list" aria-label="Dashboard Navigation">
+          <a href="#ueberblick" class="nav-link active">Überblick</a>
+          <a href="#workflow-aktionen" class="nav-link">Aktionen</a>
+          <a href="#workflows" class="nav-link">Workflows</a>
+          <a href="#n8n-live" class="nav-link">n8n Live</a>
+          <a href="#lager" class="nav-link">Lagerprüfung</a>
+          <a href="#datenqualitaet" class="nav-link">Datenqualität</a>
+        </nav>
+
+        <div class="sidebar-panel">
+          <div class="panel-label">Datenquelle</div>
+          <div id="sourceFile" class="panel-value">Lade Daten...</div>
+        </div>
+      </aside>
+
+      <main class="content">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Lokaler Projektstand</p>
+            <h1>Automatenlager Leitstand</h1>
+          </div>
+          <div class="topbar-actions">
+            <button id="refreshButton" class="button primary" type="button">Aktualisieren</button>
+            <button id="exportButton" class="button" type="button">JSON exportieren</button>
+          </div>
+        </header>
+
+        <section id="ueberblick" class="section">
+          <div id="summaryStrip" class="summary-strip"></div>
+          <div id="actionBand" class="action-band"></div>
+        </section>
+
+        <section id="workflow-aktionen" class="section">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Bedienung</p>
+              <h2>Workflow-Aktionen</h2>
+            </div>
+            <span id="actionHealth" class="status-pill">Prüfung läuft</span>
+          </div>
+          <div id="actionGrid" class="action-grid"></div>
+        </section>
+
+        <section id="workflows" class="section">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">WF0 bis WF5</p>
+              <h2>Workflow-Landschaft</h2>
+            </div>
+            <span id="workflowHealth" class="status-pill">Prüfung läuft</span>
+          </div>
+          <div id="workflowGrid" class="workflow-grid"></div>
+        </section>
+
+        <section id="n8n-live" class="section">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">n8n API</p>
+              <h2>Live-Workflows</h2>
+            </div>
+            <span id="n8nHealth" class="status-pill">Prüfung läuft</span>
+          </div>
+          <div id="n8nLivePanel" class="table-surface"></div>
+        </section>
+
+        <section id="lager" class="section two-column">
+          <div>
+            <div class="section-header compact">
+              <div>
+                <p class="eyebrow">WF5 Ergebnisbasis</p>
+                <h2>MHD und Restbestand</h2>
+              </div>
+            </div>
+            <div id="inventoryAlerts" class="table-surface"></div>
+          </div>
+          <div>
+            <div class="section-header compact">
+              <div>
+                <p class="eyebrow">WF0 Vorschau</p>
+                <h2>product_slot_id Backfill</h2>
+              </div>
+            </div>
+            <div id="backfillList" class="table-surface"></div>
+          </div>
+        </section>
+
+        <section id="datenqualitaet" class="section two-column">
+          <div>
+            <div class="section-header compact">
+              <div>
+                <p class="eyebrow">Slot-Historie</p>
+                <h2>Doppelte aktive Slots</h2>
+              </div>
+            </div>
+            <div id="duplicateSlots" class="table-surface"></div>
+          </div>
+          <div>
+            <div class="section-header compact">
+              <div>
+                <p class="eyebrow">Stammdaten</p>
+                <h2>Auffällige Produktdaten</h2>
+              </div>
+            </div>
+            <div id="dataQuality" class="table-surface"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
