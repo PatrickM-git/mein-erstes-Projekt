@@ -2,6 +2,11 @@
 .env.local
 dashboard/.env.local
 
+# VBScript-Wrapper sind verboten (werden von Antivirenprogrammen als Malware erkannt).
+# Den versteckten Start bitte ausschliesslich ueber PowerShell -WindowStyle Hidden
+# oder den Windows Task Scheduler (register-dashboard-autostart.ps1) loesen.
+*.vbs
+
 # Runtime output
 logs
 dashboard/logs/
