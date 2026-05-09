@@ -1,16 +1,18 @@
-# Handover
+# HANDOVER.md
 
-Stand: 2026-05-09
+> Update this file at the end of every session. Archive the previous version to `HANDOVER_ARCHIVE/HANDOVER_<date>.md` before overwriting.
 
-## Kurzfassung
+## Stand: 2026-05-09
+
+### Kurzfassung
 
 Das Projekt ist ein n8n-basiertes Automatenlager-System mit Google Sheets als Arbeits- und Logschicht. Es verarbeitet Rechnungen, Produktvorschlaege, Nayax-Verkaeufe, FIFO-Lagerchargen, MDB-/Slot-Historisierung und MHD-/Bestandswarnungen. Zusaetzlich gibt es ein lokales Dashboard unter `http://127.0.0.1:8787/`, das Workflows, Live-n8n-Status und Datenqualitaet sichtbar macht.
 
 Der wichtigste Architekturpunkt: WF2 darf keine aktive Maschinenbelegung erzeugen. WF4 ist allein fuer aktive MDB-/Slot-Zuordnungen und Historisierung zustaendig.
 
-## Was bisher gebaut wurde
+### Was bisher gebaut wurde
 
-### Workflows
+#### Workflows
 
 - `WF1 - Rechnungseingang automatisch mit Claude.json`
   - verarbeitet Rechnungseingang
@@ -52,7 +54,7 @@ Der wichtigste Architekturpunkt: WF2 darf keine aktive Maschinenbelegung erzeuge
   - erzeugt fehlende `product_slot_id` fuer aktive Slotzeilen
   - nicht fuer laufenden Tagesbetrieb gedacht
 
-### Dashboard
+#### Dashboard
 
 Das Dashboard wurde in `dashboard/` gebaut.
 
@@ -83,16 +85,16 @@ Dashboard-URL:
 http://127.0.0.1:8787/
 ```
 
-## Was funktioniert
+### Was funktioniert
 
 - Lokale Dashboard-App mit Node.js-Server und HTML/CSS/JS-Frontend.
 - Dashboard liest `.env.local` aus Projektwurzel oder `dashboard/`.
 - Dashboard kann n8n per API auslesen, wenn `N8N_API_KEY` gesetzt ist.
 - Dashboard zeigt operative Buttons fuer WF1 bis WF5. WF0 ist nicht im Dashboard als Tagesaktion vorgesehen.
 - Code-Nodes mit `.first()` oder `$items(...)` stehen in den geprueften lokalen Workflow-JSONs auf `runOnceForAllItems`.
-- `.env.local` und Dashboard-Logs sind fuer Git ausgeschlossen.
+- `.env.local`, Dashboard-Logs und lokale Patchskripte sind fuer Git ausgeschlossen.
 
-## Naechster konkreter Schritt
+### Naechster konkreter Schritt
 
 Der naechste sinnvolle Entwicklungsschritt ist WF5 finalisieren und testen.
 
@@ -127,17 +129,16 @@ Danach:
 3. Testlauf in n8n ausfuehren.
 4. Erst danach WF5 produktiv ersetzen oder live aktualisieren.
 
-## Bekannte Probleme und technische Schulden
+### Bekannte Probleme und technische Schulden
 
-- Dieser Ordner war beim Start dieser Dokumentationsaufgabe noch kein Git-Repository. Ein lokaler `main`-Branch muss initialisiert und ein GitHub-Remote gesetzt werden, bevor gepusht werden kann.
-- Es gibt eine lokale `dashboard/.env.local` mit n8n API-Zugang. Diese Datei darf nicht committed werden.
+- `dashboard/.env.local` enthaelt lokalen n8n API-Zugang und darf nicht committed werden.
 - `dashboard/logs/` enthaelt Laufzeitlogs und darf nicht committed werden.
-- `patch_wf5_daily_sales.py` ist ein lokales Einmal-/Patchskript und sollte nicht Teil des langfristigen Projektstandes sein.
+- `patch_wf5_daily_sales.py` ist ein lokales Einmal-/Patchskript und ist bewusst ignoriert.
 - WF5 enthaelt lokal eine angefangene Tagesverkaufs-/Mail-Erweiterung. Die Bestandsgesamtberechnung muss wegen der aktiven Lagerchargenregel final korrigiert/validiert werden.
 - Live-n8n-Workflows und lokale JSON-Dateien koennen auseinanderlaufen. Vor produktiven Aenderungen immer klaeren, ob die lokale JSON oder der live exportierte n8n-Workflow fuehrend ist.
 - Langfristig waere eine Trennung von Produktstamm und Slot-Historie sauberer als beide Konzepte in `Produkte` zu fuehren.
 
-## Wichtige fachliche Regeln
+### Wichtige fachliche Regeln
 
 - WF2 ist fuer Produktstamm, Alias, Lagercharge und Rechnungsvorschlaege zustaendig.
 - WF2 ist nicht fuer `active = TRUE`, `machine_id`, `mdb_code`, `product_slot_id`, `valid_from_datetime` oder `valid_to_datetime` zustaendig.
@@ -148,7 +149,7 @@ Danach:
 - Keine automatische produktive Aenderung in Nayax/Moma.
 - Google Sheets wird nicht manuell gepflegt, sondern ueber n8n Forms und Workflows.
 
-## Relevante Google-Sheets-Tabs
+### Relevante Google-Sheets-Tabs
 
 - `Produkte`
 - `Lagerchargen`
@@ -160,9 +161,9 @@ Danach:
 - `Bestandskorrektur_Vorschlaege` geplant
 - `Bestandskorrekturen_Log` geplant
 
-## Hinweise fuer Claude Code
+### Hinweise fuer Claude Code
 
-1. Zuerst `README.md` und `ARCHITECTURE.md` lesen.
+1. Zuerst `README.md`, `ARCHITECTURE.md` und `CLAUDE.md` lesen.
 2. Danach die lokalen Workflow-JSONs nicht blind ueberschreiben, sondern mit live n8n abgleichen.
 3. Keine Secrets aus `dashboard/.env.local` ausgeben oder committen.
 4. Bei n8n-Code-Nodes, die `.first()` oder `$items(...)` verwenden, immer `Run Once for All Items` setzen.

@@ -87,7 +87,9 @@ Die Workflow-Dateien koennen in n8n importiert oder mit den live vorhandenen Wor
 .
 |-- README.md
 |-- ARCHITECTURE.md
+|-- CLAUDE.md
 |-- HANDOVER.md
+|-- HANDOVER_ARCHIVE/
 |-- WF0 - product_slot_id Backfill.json
 |-- WF1 - Rechnungseingang automatisch mit Claude.json
 |-- WF2 - Smart Product Selection - Rechnungsvorschlaege freigeben.json
@@ -111,6 +113,9 @@ Die Workflow-Dateien koennen in n8n importiert oder mit den live vorhandenen Wor
 
 ### Root-Dateien
 
+- `CLAUDE.md`: Arbeitsanweisungen fuer Claude Code und andere KI-Agenten.
+- `HANDOVER.md`: Aktueller Uebergabestand.
+- `HANDOVER_ARCHIVE/`: Archiv alter Handover-Staende.
 - `WF0 - product_slot_id Backfill.json`: Einmaliger Reparaturworkflow fuer aktive Produktzeilen ohne `product_slot_id`.
 - `WF1 - Rechnungseingang automatisch mit Claude.json`: Rechnungseingang, KI-Auswertung und Start von WF2.
 - `WF2 - Smart Product Selection - Rechnungsvorschlaege freigeben.json`: Rechnungsvorschlaege, Produktstamm, Aliase und Lagerchargen.
