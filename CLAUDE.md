@@ -82,6 +82,14 @@ N8N_BASE_URL=http://127.0.0.1:5678
 N8N_API_KEY=...
 ```
 
+## Security Rules — Mandatory
+
+- **Never hardcode API keys, bearer tokens or passwords in workflow JSON files.**
+- All external API credentials (Nayax, n8n, Google, etc.) must be stored as n8n credentials or in `dashboard/.env.local`.
+- Workflow JSON exports must only contain the placeholder `NAYAX_TOKEN_IN_N8N_CREDENTIAL_EINTRAGEN` (or similar) — never a real value.
+- Before committing any workflow JSON, search for `Bearer `, `apikey`, `password` and `secret` patterns and verify no real token is present.
+- If a real token is accidentally committed: revoke it immediately, replace with a placeholder, clean git history with `git filter-repo`, then force-push.
+
 ## n8n Workflow Notes
 
 - The target n8n version is 2.18.5.

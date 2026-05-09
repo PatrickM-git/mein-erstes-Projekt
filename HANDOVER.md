@@ -140,6 +140,14 @@ Testcheckliste:
 3. Testlauf in n8n ausfuehren.
 4. Erst danach WF5 produktiv freigeben bzw. aktiviert lassen.
 
+### Sicherheitsvorfall 2026-05-09 – Nayax Bearer-Token (behoben)
+
+- Der Nayax Bearer-Token stand im Klartext in `WF3...json` und wurde von GitHub Secret Scanning erkannt.
+- Der Token wurde aus der JSON entfernt. Der Platzhalter lautet jetzt `Bearer NAYAX_TOKEN_IN_N8N_CREDENTIAL_EINTRAGEN`.
+- **Pflichtaktion:** Den alten Token sofort im Nayax-/Moma-Portal sperren und einen neuen generieren.
+- Den neuen Token ausschliesslich als n8n-Credential (`HTTP Header Auth`) hinterlegen, niemals direkt in Workflow-JSON schreiben.
+- Die Git-History wurde per `git filter-repo` bereinigt, sodass der Token auch in aelteren Commits nicht mehr vorhanden ist.
+
 ### Bekannte Probleme und technische Schulden
 
 - `dashboard/.env.local` enthaelt lokalen n8n API-Zugang und darf nicht committed werden.
