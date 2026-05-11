@@ -58,38 +58,9 @@ WF3 wurde ausserdem von n8n-API MIT korrekter Credential
 (`5XfHt3SzjHCj8B5H = Sheets Automatenlager`) gespeichert.
 Lokale JSON-Datei aktualisiert + Nayax-Token-Platzhalter gesetzt.
 
-**Erledigt im Codex-Nachtrag:** Der echte Nayax-Bearer-Token wurde im live WF3 von einem
-statischen Header-Parameter auf eine n8n HTTP-Header-Auth-Credential umgestellt.
-
-#### Codex-Nachtrag 2026-05-11 Abend – WF3 Credential + Sheets-Schema – abgeschlossen
-
-**Nayax-Token aus WF3 entfernt / n8n-Credential eingerichtet:**
-- Hilfsskript `guv_check_tmp/setup_nayax_credential.js` wurde repariert und erfolgreich genutzt.
-- Urspruenglicher Fehler `settings is not defined` kam daher, dass beim Workflow-`PUT`
-  `settings` statt `wf.settings` gesendet wurde.
-- Zweiter Fehler `request/body/settings must NOT have additional properties` kam daher, dass
-  n8n beim `GET` interne Settings liefert, die beim `PUT` nicht wieder akzeptiert werden.
-- Fix im Skript:
-  - Workflow-Settings werden ueber `getWritableWorkflowSettings(wf.settings)` gefiltert.
-  - Das Skript sucht zuerst eine vorhandene `Nayax Bearer` Credential und aktualisiert sie per
-    `PATCH`, statt bei jedem Lauf eine neue Credential anzulegen.
-  - Token wird interaktiv in PowerShell eingegeben und nicht in Chat, Log oder Workflow-JSON
-    fest gespeichert.
-- Live-WF3 wurde erfolgreich auf `credentials.httpHeaderAuth = { name: 'Nayax Bearer' }`
-  umgestellt. Der statische Authorization-Header im Node `Nayax - Last Sales` ist nicht mehr
-  fuehrend.
-
-**WF3 Google-Sheets-Fehler behoben:**
-- Beim ersten WF3-Lauf nach Phase A2 kam im Node `Google Sheets - Transaktionen anhaengen`:
-  `Column names were updated after the node's setup`.
-- Ursache war eine vertauschte Spaltenreihenfolge zwischen echtem Sheet-Header und n8n-Node-Schema:
-  - Google Sheet: `..., vk_preis_brutto, umsatz_brutto, batch_id_abgebucht, mdb_code_extracted`
-  - n8n-Node-Cache: `..., vk_preis_brutto, umsatz_brutto, mdb_code_extracted, batch_id_abgebucht`
-- n8n blockiert dann den Append, weil die gespeicherte Spaltenliste nicht mehr zu den realen
-  Google-Sheets-Headern passt.
-- Fix: Im Node `Google Sheets - Transaktionen anhaengen` die Spaltenliste/Fields aktualisiert
-  und die Mappings fuer `mdb_code_extracted` und `batch_id_abgebucht` korrekt gesetzt.
-- Nutzer hat bestaetigt: WF3 laeuft danach komplett.
+**Achtung:** Der echte Nayax-Bearer-Token ist im live n8n-Workflow im Node `Nayax - Last Sales`
+noch als Klartext hinterlegt (als Header-Parameter, nicht als n8n-Credential). Dies sollte
+auf ein n8n HTTP-Header-Auth-Credential umgestellt werden (siehe Bekannte Probleme).
 
 ### Was bisher gebaut wurde
 
@@ -100,7 +71,7 @@ statischen Header-Parameter auf eine n8n HTTP-Header-Auth-Credential umgestellt.
 - `WF2` – Smart Product Selection / Rechnungsvorschlaege
 - `WF3` – Nayax Lynx FIFO Lagerbestand **(Phase A2 erweitert)**
   - Jetzt: `vk_preis_brutto`, `umsatz_brutto`, `mdb_code_extracted`, `batch_id_abgebucht`
-  - Nayax-Credential: erledigt, live WF3 nutzt n8n HTTP-Header-Auth-Credential `Nayax Bearer`
+  - Nayax-Credential: Token noch als Klartext im Node – auf n8n-Credential umstellen!
 - `WF4` – MDB Produktzuordnung bearbeiten (Slot-Historisierung)
 - `WF5` – MHD und niedrige Lagercharge ueberwachen
 - `WF7` – GuV Sheets Setup (ID: `d6JoXqhfTOuvRKVv`, einmalig ausgefuehrt)
@@ -118,10 +89,6 @@ statischen Header-Parameter auf eine n8n HTTP-Header-Auth-Credential umgestellt.
 - Phase A2: WF3 live in n8n aktualisiert, neue Felder werden beim naechsten Verkaufslauf
   in `Verarbeitete_Transaktionen` geschrieben.
 - Google-Sheets-Credentials korrekt in WF3 hinterlegt.
-- Nayax-Bearer-Token ist jetzt als n8n HTTP-Header-Auth-Credential `Nayax Bearer` hinterlegt;
-  WF3 nutzt diese Credential statt eines statischen Klartext-Headers.
-- `Google Sheets - Transaktionen anhaengen` hat aktualisierte Spalten-Mappings und appends
-  wieder erfolgreich in `Verarbeitete_Transaktionen`.
 
 ### Naechste konkrete Schritte (nach Phase A2)
 
@@ -156,11 +123,10 @@ statischen Header-Parameter auf eine n8n HTTP-Header-Auth-Credential umgestellt.
 
 ### Bekannte Probleme und technische Schulden
 
-- **Erledigt 2026-05-11:** Nayax-Token im live WF3 wurde von statischem Header auf n8n
-  HTTP-Header-Auth-Credential `Nayax Bearer` umgestellt.
-- Bei zukuenftigen Google-Sheets-Spaltenerweiterungen in n8n immer den betroffenen
-  Google-Sheets-Node oeffnen, Fields/Columns refreshen und neu speichern. Sonst kann n8n mit
-  `Column names were updated after the node's setup` abbrechen.
+- **Nayax-Token im live WF3 als Klartext**: `Nayax - Last Sales`-Node hat den Bearer-Token
+  als statischen Header-Parameter statt als n8n-Credential. Umstellen auf:
+  n8n → Credentials → HTTP Header Auth → Name: `Nayax Bearer` →
+  Header: `Authorization`, Wert: `Bearer <token>`. Dann in WF3 zuweisen.
 - WF5 lokal korrigiert (Bestandslogik), aber noch nicht in n8n live getestet/importiert.
 - Phase A3–A8 noch offen.
 - Langfristig: Trennung von Produktstamm und Slot-Historie waere sauberer.
@@ -200,8 +166,6 @@ statischen Header-Parameter auf eine n8n HTTP-Header-Auth-Credential umgestellt.
 3. Vor Workflow-Aenderungen klaeren: lokale JSON oder live n8n fuehrend?
 4. WF3-Patches via n8n REST API (`PUT /api/v1/workflows/<id>`) sind bewaehrt –
    nicht via SDK rewrite (zu viele Nodes, zu fehleranfaellig).
-   Achtung: Beim PUT nur erlaubte Workflow-Settings senden; nicht blind `wf.settings`
-   aus einem GET zurueckschreiben.
 5. n8n API-Key: in `dashboard/.dashboard-config.json` gespeichert (gitignored).
 6. Google-Sheets-Credential ID fuer PUT-Requests: `5XfHt3SzjHCj8B5H` (Sheets Automatenlager).
 7. WF2/WF4-Eigentuemer beachten: WF2 = Produkt/Lager/Rechnung, WF4 = Slot/Historie.
