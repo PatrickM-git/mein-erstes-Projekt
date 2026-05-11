@@ -105,11 +105,14 @@ N8N_API_KEY=...
 
 ## Current Next Step
 
-Test/import WF5 in n8n:
+Phase A3: WF1/WF2 erweitern – `mwst_satz` und `ek_preis_netto` aus Rechnungen
 
-- products sold today are included in the daily report
-- `Bestand im Automat` is shown separately
-- `Bestand gesamt` is based on active warehouse batches
-- do not calculate total stock as `current_machine_qty + remaining_qty`
-- active warehouse batch `remaining_qty` already includes machine stock
-- run one controlled WF5 test before replacing/activating the live n8n workflow
+- In WF2 beim Anlegen/Aktualisieren von Lagerchargen das Feld `mwst_satz` schreiben
+  (7 % Snack, 19 % Getraenk – aus Rechnungsposition oder Produkt-Stammdaten)
+- In WF2 den Netto-EK (`ek_preis_netto`) aus dem Brutto-Rechnungsbetrag berechnen
+
+Danach Phase A4: WF8 GuV-Aggregator bauen (taeglich, schreibt in `GuV_Tagesposten`).
+
+Offene Sicherheitsschuld: Nayax-Bearer-Token im live WF3 (`Nayax - Last Sales`-Node)
+ist noch als statischer Header-Parameter hinterlegt. Auf n8n HTTP-Header-Auth-Credential
+umstellen (n8n → Credentials → HTTP Header Auth → `Nayax Bearer`).
