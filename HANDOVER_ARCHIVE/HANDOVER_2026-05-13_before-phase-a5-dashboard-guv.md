@@ -2,7 +2,7 @@
 
 > Update this file at the end of every session. Archive the previous version to `HANDOVER_ARCHIVE/HANDOVER_<date>.md` before overwriting.
 
-## Stand: 2026-05-13 (Session 5 – Phase A5 Dashboard GuV Endpoint)
+## Stand: 2026-05-12 (Session 4 – Phase A3 lokal)
 
 ### Kurzfassung
 
@@ -136,43 +136,6 @@ Noch nicht erledigt:
   vorhanden sein bzw. der jeweilige Google-Sheets-Node in n8n nach Spaltenaenderung
   refreshed und gespeichert werden.
 
-#### Codex-Nachtrag 2026-05-13 – Phase A5 Dashboard `/api/guv` lokal implementiert
-
-Neue lokale Dashboard-Funktion:
-
-- `dashboard/server.js`
-  - `GuV_Tagesposten` und `GuV_Konfiguration` in die Google-Sheets-Live-Leseliste aufgenommen.
-  - Neuer Endpoint `GET /api/guv`.
-  - Query-Filter:
-    - `range=week|month|quarter|year|all` (Default: `month`)
-    - `start`/`end` fuer Custom-Zeitraeume
-    - `machine_id` fuer Maschinenfilter
-  - Response enthaelt:
-    - `kpis`: Umsatz brutto, Wareneinsatz brutto, GuV, verkaufte Menge, Posten-/Produkt-/Maschinenanzahl
-    - `machines`: aggregierte Maschinenliste
-    - `products`: aggregierte Produkttabelle
-    - `rows`: bis zu 500 passende Rohzeilen
-    - `source`: Live-/Fallback-Quelle und Zeilenzaehler
-  - `range=all` filtert jetzt wirklich ungegrenzt.
-  - Lokale XLSX bleibt Fallback, kann aber mangels neuer GuV-Tabs leer sein.
-
-Workflow-Sync:
-
-- Live-WF8 wurde per n8n MCP gefunden und nach Git exportiert:
-  - ID: `qwpQMhZqDAIs8Wi9`
-  - Name: `WF8 - GuV Tagesposten Aggregator`
-  - Status: inactive
-  - Lokale Datei: `WF8 - GuV Tagesposten Aggregator.json`
-
-Validierung:
-
-- `node --check dashboard/server.js` erfolgreich.
-- `WF8 - GuV Tagesposten Aggregator.json` lokal parsebar.
-- Lokaler Test auf Ausweichport `8878`:
-  - `GET /api/guv?range=all` -> HTTP 200
-  - Google Sheets live erreichbar
-  - `GuV_Tagesposten` hat aktuell 3 Statuszeilen ohne Datum (`Keine neuen Aggregationen`), daher `rowsMatched=0`.
-
 ### Was bisher gebaut wurde
 
 #### Workflows
@@ -187,7 +150,6 @@ Validierung:
 - `WF4` – MDB Produktzuordnung bearbeiten (Slot-Historisierung)
 - `WF5` – MHD und niedrige Lagercharge ueberwachen
 - `WF7` – GuV Sheets Setup (ID: `d6JoXqhfTOuvRKVv`, einmalig ausgefuehrt)
-- `WF8` – GuV Tagesposten Aggregator (ID: `qwpQMhZqDAIs8Wi9`, live vorhanden, lokal exportiert)
 
 #### Dashboard (`dashboard/`)
 
@@ -202,7 +164,6 @@ Validierung:
 - Phase A2: WF3 live in n8n aktualisiert, neue Felder werden beim naechsten Verkaufslauf
   in `Verarbeitete_Transaktionen` geschrieben.
 - Phase A3: WF1/WF2 lokal erweitert; Live-Import und Testlauf stehen noch aus.
-- Phase A5: Dashboard-Endpoint `/api/guv` lokal implementiert und gegen Google-Sheets-Livezugriff getestet.
 - Google-Sheets-Credentials korrekt in WF3 hinterlegt.
 - Nayax-Bearer-Token ist jetzt als n8n HTTP-Header-Auth-Credential `Nayax Bearer` hinterlegt;
   WF3 nutzt diese Credential statt eines statischen Klartext-Headers.
@@ -228,10 +189,17 @@ Validierung:
   - `Lagerchargen.mwst_satz` ist 7 oder 19.
   - Neue Produktzeile enthaelt `produktart`.
 
-#### Phase A4/A5: WF8 und Dashboard `/api/guv` – lokal erledigt
-- WF8 existiert live in n8n und wurde lokal als JSON exportiert.
-- `/api/guv` liest `GuV_Tagesposten`, aggregiert nach Zeitraum und Maschine und gibt KPI-Daten zurueck.
-- Noch offen: WF8 produktiv aktivieren/testen, sobald echte GuV-Zeilen entstehen sollen.
+#### Phase A4: WF8 GuV-Aggregator bauen
+- Taeglich per Cron (z.B. 02:00 Uhr)
+- Fuer jeden Verkaufstag / jede Maschine: FIFO-Wareneinsatz berechnen
+  - `wareneinsatz_brutto = sum(qty * ek_preis_brutto)` aus abgebuchten Chargen
+  - `kleinunternehmer_aktiv` aus `GuV_Konfiguration` lesen
+  - `guv = umsatz_brutto - wareneinsatz_brutto`
+- Ergebnisse in `GuV_Tagesposten` schreiben
+
+#### Phase A5: Dashboard `/api/guv` Endpoint
+- Liest `GuV_Tagesposten`, aggregiert nach Zeitraum und Maschine
+- Gibt KPI-Tiles zurueck: Umsatz, Wareneinsatz, GuV, Anzahl Verkaeufe
 
 #### Phase A6: Dashboard GuV-Section
 - Zeitraum-Selector (Woche/Monat/Quartal/Custom)
@@ -270,8 +238,7 @@ Validierung:
   GuV-Aggregator vorsichtig behandelt oder einmalig bereinigt werden.
 - WF5 lokal korrigiert (Bestandslogik), aber noch nicht in n8n live getestet/importiert.
 - Phase A3 lokal implementiert, aber noch nicht live getestet/importiert.
-- Phase A6–A8 noch offen.
-- Phase A3 Live-Test/Import bleibt trotz A5-Fortschritt offen, weil WF1/WF2 live noch nicht sicher auf dem lokalen A3-Stand sind.
+- Phase A4–A8 noch offen.
 - Langfristig: Trennung von Produktstamm und Slot-Historie waere sauberer.
 
 ### Google Sheets – Tabs im Ueberblick

@@ -149,7 +149,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 4000,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": [\n        {\n          \"type\": \"document\",\n          \"source\": {\n            \"type\": \"base64\",\n            \"media_type\": \"application/pdf\",\n            \"data\": \"{{ $json.file_base64 }}\"\n          }\n        },\n        {\n          \"type\": \"text\",\n          \"text\": \"Du bist ein Rechnungsparser für ein Automatenlager. Extrahiere aus der Rechnung ausschließlich valides JSON. Keine Markdown-Codeblöcke, keine Erklärung.\\n\\nSchema:\\n{\\\"invoice_id\\\":\\\"\\\",\\\"supplier\\\":\\\"\\\",\\\"purchase_date\\\":\\\"YYYY-MM-DD\\\",\\\"invoice_lines\\\":[{\\\"source_item\\\":\\\"\\\",\\\"quantity\\\":0,\\\"mhd\\\":\\\"YYYY-MM-DD oder leer\\\",\\\"unit_cost\\\":0,\\\"nayax_product_name\\\":\\\"\\\",\\\"mdb_code\\\":\\\"\\\",\\\"sale_price_eur\\\":\\\"\\\"}]}\\n\\nRegeln:\\npurchase_date ist das Rechnungsdatum oder Lieferdatum, wenn kein Rechnungsdatum erkennbar ist.\\n\\nquantity ist die Anzahl der gekauften verkaufbaren Einheiten bzw. Verkaufspackungen, nicht die Anzahl einzelner Stücke innerhalb einer Packung.\\n\\nWenn eine Positionsbezeichnung mehrere Zahlen mit \\\"x\\\" enthält, dann ist die erste Zahl vor dem ersten \\\"x\\\" die quantity.\\n\\nBeispiele:\\n\\\"30x2x21,5g KINDER BU KLASSIK\\\" bedeutet quantity = 30, weil 30 Doppelpackungen gekauft wurden.\\n\\\"24x36g M&M CRISPY EINZELBEUTEL\\\" bedeutet quantity = 24.\\n\\\"12x0,5L GETRÄNK\\\" bedeutet quantity = 12.\\n\\nunit_cost ist der Netto- oder Brutto-Einzelpreis pro verkaufbarer Einheit, wenn eindeutig erkennbar, sonst leer.\\n\\nMHD nur übernehmen, wenn es auf der Rechnung steht.\\n\\nnayax_product_name zunächst aus source_item ableiten.\\n\\nmdb_code und sale_price_eur leer lassen, wenn nicht auf der Rechnung vorhanden.\\n\\nWenn eine Position unklar ist, trotzdem aufnehmen und fehlende Werte leer lassen.\"\n        }\n      ]\n    }\n  ]\n}",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 4000,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": [\n        {\n          \"type\": \"document\",\n          \"source\": {\n            \"type\": \"base64\",\n            \"media_type\": \"application/pdf\",\n            \"data\": \"{{ $json.file_base64 }}\"\n          }\n        },\n        {\n          \"type\": \"text\",\n          \"text\": \"Du bist ein Rechnungsparser fuer ein Automatenlager. Extrahiere aus der Rechnung ausschliesslich valides JSON. Keine Markdown-Codebloecke, keine Erklaerung.\\n\\nSchema:\\n{\\\"invoice_id\\\":\\\"\\\",\\\"supplier\\\":\\\"\\\",\\\"purchase_date\\\":\\\"YYYY-MM-DD\\\",\\\"invoice_lines\\\":[{\\\"source_item\\\":\\\"\\\",\\\"quantity\\\":0,\\\"mhd\\\":\\\"YYYY-MM-DD oder leer\\\",\\\"unit_cost\\\":0,\\\"unit_cost_brutto\\\":0,\\\"unit_cost_netto\\\":0,\\\"mwst_satz\\\":7,\\\"produktart\\\":\\\"snack|getraenk\\\",\\\"nayax_product_name\\\":\\\"\\\",\\\"mdb_code\\\":\\\"\\\",\\\"sale_price_eur\\\":\\\"\\\"}]}\\n\\nRegeln:\\npurchase_date ist das Rechnungsdatum oder Lieferdatum, wenn kein Rechnungsdatum erkennbar ist.\\n\\nquantity ist die Anzahl der gekauften verkaufbaren Einheiten bzw. Verkaufspackungen, nicht die Anzahl einzelner Stuecke innerhalb einer Packung.\\n\\nWenn eine Positionsbezeichnung mehrere Zahlen mit \\\"x\\\" enthaelt, dann ist die erste Zahl vor dem ersten \\\"x\\\" die quantity.\\n\\nBeispiele:\\n\\\"30x2x21,5g KINDER BU KLASSIK\\\" bedeutet quantity = 30, weil 30 Doppelpackungen gekauft wurden.\\n\\\"24x36g M&M CRISPY EINZELBEUTEL\\\" bedeutet quantity = 24.\\n\\\"12x0,5L GETRAENK\\\" bedeutet quantity = 12.\\n\\nunit_cost_brutto ist der Brutto-EK pro verkaufbarer Einheit. Wenn auf der Rechnung nur Netto-EK und MwSt stehen, berechne unit_cost_brutto = unit_cost_netto * (1 + mwst_satz / 100).\\nunit_cost_netto ist der Netto-EK pro verkaufbarer Einheit. Wenn auf der Rechnung nur Brutto-EK und MwSt stehen, berechne unit_cost_netto = unit_cost_brutto / (1 + mwst_satz / 100).\\nunit_cost bleibt aus Rueckwaertskompatibilitaet der Brutto-EK pro verkaufbarer Einheit.\\n\\nmwst_satz ist der Mehrwertsteuersatz der Position als Zahl, typischerweise 7 oder 19. Wenn die Rechnung keinen Satz zeigt, nutze 7 fuer Snacks/Suesswaren/Lebensmittel und 19 fuer Getraenke.\\nproduktart ist \\\"snack\\\" oder \\\"getraenk\\\". Wenn nicht explizit angegeben, aus der Positionsbezeichnung ableiten.\\n\\nMHD nur uebernehmen, wenn es auf der Rechnung steht.\\n\\nnayax_product_name zunaechst aus source_item ableiten.\\n\\nmdb_code und sale_price_eur leer lassen, wenn nicht auf der Rechnung vorhanden.\\n\\nWenn eine Position unklar ist, trotzdem aufnehmen und fehlende Werte leer lassen.\"\n        }\n      ]\n    }\n  ]\n}",
         "options": {}
       },
       "id": "9de0623f-2a95-436b-862e-b344562aa1b3",
@@ -270,7 +270,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const invoice = $items('Code - Claude JSON parsen')[0].json;\nconst products = $items('Google Sheets - Produkte lesen').map(i => i.json);\nconst batches = $items('Google Sheets - Lagerchargen lesen').map(i => i.json);\nconst aliases = $items('Google Sheets - Produkt_Aliase lesen').map(i => i.json);\n\nconst now = new Date().toISOString();\n\nfunction clean(v) {\n  return String(v ?? '').replace(/\\n/g, ' ').replace(/\\s+/g, ' ').trim();\n}\n\nfunction normalize(v) {\n  return clean(v)\n    .toLowerCase()\n    .replace(/&/g, 'und')\n    .replace(/\\+/g, 'plus')\n    .replace(/ä/g, 'ae')\n    .replace(/ö/g, 'oe')\n    .replace(/ü/g, 'ue')\n    .replace(/ß/g, 'ss')\n    .replace(/[^a-z0-9]/g, '');\n}\n\nfunction keyFromName(name) {\n  const base = clean(name)\n    .toUpperCase()\n    .replace(/Ä/g, 'AE')\n    .replace(/Ö/g, 'OE')\n    .replace(/Ü/g, 'UE')\n    .replace(/ẞ/g, 'SS')\n    .replace(/ß/g, 'SS')\n    .replace(/&/g, 'UND')\n    .replace(/\\+/g, 'PLUS')\n    .replace(/[^A-Z0-9]+/g, '_')\n    .replace(/^_+|_+$/g, '');\n  return `SKU_${base || 'UNBEKANNT'}`;\n}\n\nfunction batchId(productKey, purchaseDate, existingCount) {\n  const ymd = clean(purchaseDate).replace(/-/g, '') || new Date().toISOString().slice(0,10).replace(/-/g, '');\n  return `B_${String(productKey).replace(/^SKU_/, '')}_${ymd}_${existingCount + 1}`;\n}\n\nfunction nameMatches(a, b) {\n  const aa = normalize(a);\n  const bb = normalize(b);\n  if (!aa || !bb) return false;\n  if (aa === bb) return true;\n  if (aa.length >= 8 && bb.includes(aa)) return true;\n  if (bb.length >= 8 && aa.includes(bb)) return true;\n  return false;\n}\n\nfunction findProduct(line) {\n  const source = line.source_item;\n  const nayax = line.nayax_product_name;\n\n  const alias = aliases.find(a =>\n    nameMatches(a.alias_name, source) ||\n    nameMatches(a.alias_name, nayax) ||\n    nameMatches(a.source_item, source)\n  );\n\n  if (alias && clean(alias.product_key)) {\n    const product = products.find(p => clean(p.product_key) === clean(alias.product_key));\n    if (product) return { product, confidence: 'hoch', reason: 'Alias gefunden' };\n  }\n\n  const byName = products.find(p =>\n    nameMatches(p.nayax_product_name || p.internal_product_name, nayax) ||\n    nameMatches(p.internal_product_name || p.nayax_product_name, source)\n  );\n\n  if (byName) {\n    return { product: byName, confidence: 'mittel', reason: 'Namensähnlichkeit gefunden' };\n  }\n\n  return { product: null, confidence: 'prüfen', reason: 'Kein Produkt gefunden' };\n}\n\nconst suggestions = [];\nconst lines = invoice.invoice_lines || [];\n\nfor (const [index, line] of lines.entries()) {\n  const match = findProduct(line);\n  const isKnown = !!match.product;\n  const productKey = isKnown ? clean(match.product.product_key) : keyFromName(line.nayax_product_name || line.source_item);\n  const existingBatchCount = batches.filter(b => clean(b.product_key) === productKey).length;\n\n  const missing = [];\n  if (!clean(invoice.invoice_id)) missing.push('invoice_id');\n  if (!clean(invoice.supplier)) missing.push('supplier');\n  if (!clean(invoice.purchase_date)) missing.push('purchase_date');\n  if (!clean(line.source_item)) missing.push('source_item');\n  if (!Number.isFinite(Number(line.quantity)) || Number(line.quantity) <= 0) missing.push('quantity');\n  if (!clean(line.nayax_product_name)) missing.push('nayax_product_name');\n\n  const changeType = isKnown ? 'EXISTING_PRODUCT_NEW_BATCH' : 'NEW_PRODUCT_AND_BATCH';\n\n  suggestions.push({\n    created_at: now,\n    source_file_id: invoice.drive_file_id,\n    source_file_name: invoice.drive_file_name,\n    invoice_id: clean(invoice.invoice_id),\n    supplier: clean(invoice.supplier),\n    purchase_date: clean(invoice.purchase_date),\n    line_number: index + 1,\n    source_item: clean(line.source_item),\n    detected_quantity: Number(line.quantity ?? 0),\n    detected_mhd: clean(line.mhd),\n    detected_unit_cost: line.unit_cost ?? '',\n    mdb_code: clean(line.mdb_code),\n    approval_id: `APP_${invoice.drive_file_id}_${index + 1}`,\n    nayax_product_name: clean(line.nayax_product_name || line.source_item),\n    existing_product_key: isKnown ? productKey : '',\n    existing_product_name: isKnown ? (match.product.internal_product_name || match.product.nayax_product_name || '') : '',\n    suggested_product_key: productKey,\n    suggested_batch_id: batchId(productKey, invoice.purchase_date, existingBatchCount),\n    suggested_storage_location: $('Config - WF2').first().json.default_storage_location || 'Lager',\n    suggested_action: changeType,\n    confidence: missing.length ? 'unvollständig' : match.confidence,\n    needs_user_input: missing.length ? 'TRUE' : 'FALSE',\n    missing_fields: missing.join(', '),\n    approved: 'FALSE',\n    processed: 'FALSE',\n    notes: match.reason\n  });\n}\n\nif (!suggestions.length) {\n  throw new Error('Keine Rechnungspositionen erkannt. Datei wird nicht verschoben.');\n}\n\nreturn suggestions.map(s => ({ json: s }));",
+        "jsCode": "const invoice = $items('Code - Claude JSON parsen')[0].json;\nconst products = $items('Google Sheets - Produkte lesen').map(i => i.json);\nconst batches = $items('Google Sheets - Lagerchargen lesen').map(i => i.json);\nconst aliases = $items('Google Sheets - Produkt_Aliase lesen').map(i => i.json);\n\nconst now = new Date().toISOString();\n\nfunction clean(v) {\n  return String(v ?? '').replace(/\\n/g, ' ').replace(/\\s+/g, ' ').trim();\n}\n\nfunction first(...vals) {\n  return vals.map(clean).find(v => v !== '') || '';\n}\n\nfunction normalize(v) {\n  return clean(v)\n    .toLowerCase()\n    .replace(/&/g, 'und')\n    .replace(/\\+/g, 'plus')\n    .replace(/ä/g, 'ae')\n    .replace(/ö/g, 'oe')\n    .replace(/ü/g, 'ue')\n    .replace(/ß/g, 'ss')\n    .replace(/[^a-z0-9]/g, '');\n}\n\nfunction parseNumber(v) {\n  const raw = clean(v).replace(/[^\\d,.\\-]/g, '');\n  if (!raw) return NaN;\n  let normalized = raw;\n  const lastComma = raw.lastIndexOf(',');\n  const lastDot = raw.lastIndexOf('.');\n  if (lastComma >= 0 && lastDot >= 0) {\n    normalized = lastComma > lastDot\n      ? raw.replace(/\\./g, '').replace(',', '.')\n      : raw.replace(/,/g, '');\n  } else if (lastComma >= 0) {\n    normalized = raw.replace(',', '.');\n  }\n  const value = Number(normalized);\n  return Number.isFinite(value) ? value : NaN;\n}\n\nfunction formatDecimal(v) {\n  if (!Number.isFinite(v)) return '';\n  return String(Math.round(v * 10000) / 10000);\n}\n\nfunction normalizeProduktart(v) {\n  const n = normalize(v);\n  if (!n) return '';\n  if (['getraenk', 'getraenke', 'drink', 'drinks', 'beverage', 'beverages'].includes(n)) return 'getraenk';\n  if (['snack', 'snacks', 'food', 'lebensmittel', 'suessware', 'suesswaren'].includes(n)) return 'snack';\n  return '';\n}\n\nfunction inferProduktart(line, product) {\n  const explicit = normalizeProduktart(first(line.produktart, line.product_type, line.produkt_art, product?.produktart));\n  if (explicit) return explicit;\n\n  const text = normalize([\n    line.source_item,\n    line.nayax_product_name,\n    line.raw_item_name,\n    product?.internal_product_name,\n    product?.nayax_product_name,\n  ].map(clean).join(' '));\n\n  const drinkHints = [\n    'getraenk', 'getraenke', 'drink', 'cola', 'fanta', 'sprite', 'mezzo', 'wasser',\n    'water', 'saft', 'juice', 'eistee', 'icetea', 'mate', 'redbull', 'energy',\n    'kaffee', 'cappuccino', 'espresso', 'bier', 'limo', 'schorle',\n  ];\n\n  return drinkHints.some(hint => text.includes(hint)) ? 'getraenk' : 'snack';\n}\n\nfunction normalizeMwst(v) {\n  const parsed = parseNumber(v);\n  if (!Number.isFinite(parsed) || parsed <= 0) return NaN;\n  const percent = parsed > 0 && parsed < 1 ? parsed * 100 : parsed;\n  return Math.round(percent * 100) / 100;\n}\n\nfunction inferMwstSatz(line, product, produktart) {\n  const explicit = normalizeMwst(first(line.mwst_satz, line.vat_rate, line.tax_rate, line.mwst, product?.mwst_satz));\n  if (Number.isFinite(explicit)) return explicit;\n  return produktart === 'getraenk' ? 19 : 7;\n}\n\nfunction calculateCosts(line, mwstSatz) {\n  const grossRaw = first(line.unit_cost_brutto, line.ek_preis_brutto, line.unit_cost_gross, line.unit_cost);\n  const netRaw = first(line.unit_cost_netto, line.ek_preis_netto, line.unit_cost_net);\n  let brutto = parseNumber(grossRaw);\n  let netto = parseNumber(netRaw);\n  const factor = 1 + (Number(mwstSatz) || 0) / 100;\n\n  if (!Number.isFinite(brutto) && Number.isFinite(netto) && factor > 0) {\n    brutto = netto * factor;\n  }\n  if (!Number.isFinite(netto) && Number.isFinite(brutto) && factor > 0) {\n    netto = brutto / factor;\n  }\n\n  return {\n    brutto: formatDecimal(brutto),\n    netto: formatDecimal(netto),\n  };\n}\n\nfunction keyFromName(name) {\n  const base = clean(name)\n    .toUpperCase()\n    .replace(/Ä/g, 'AE')\n    .replace(/Ö/g, 'OE')\n    .replace(/Ü/g, 'UE')\n    .replace(/ẞ/g, 'SS')\n    .replace(/ß/g, 'SS')\n    .replace(/&/g, 'UND')\n    .replace(/\\+/g, 'PLUS')\n    .replace(/[^A-Z0-9]+/g, '_')\n    .replace(/^_+|_+$/g, '');\n  return `SKU_${base || 'UNBEKANNT'}`;\n}\n\nfunction batchId(productKey, purchaseDate, existingCount) {\n  const ymd = clean(purchaseDate).replace(/-/g, '') || new Date().toISOString().slice(0,10).replace(/-/g, '');\n  return `B_${String(productKey).replace(/^SKU_/, '')}_${ymd}_${existingCount + 1}`;\n}\n\nfunction nameMatches(a, b) {\n  const aa = normalize(a);\n  const bb = normalize(b);\n  if (!aa || !bb) return false;\n  if (aa === bb) return true;\n  if (aa.length >= 8 && bb.includes(aa)) return true;\n  if (bb.length >= 8 && aa.includes(bb)) return true;\n  return false;\n}\n\nfunction findProduct(line) {\n  const source = line.source_item;\n  const nayax = line.nayax_product_name;\n\n  const alias = aliases.find(a =>\n    nameMatches(a.alias_name, source) ||\n    nameMatches(a.alias_name, nayax) ||\n    nameMatches(a.source_item, source)\n  );\n\n  if (alias && clean(alias.product_key)) {\n    const product = products.find(p => clean(p.product_key) === clean(alias.product_key));\n    if (product) return { product, confidence: 'hoch', reason: 'Alias gefunden' };\n  }\n\n  const byName = products.find(p =>\n    nameMatches(p.nayax_product_name || p.internal_product_name, nayax) ||\n    nameMatches(p.internal_product_name || p.nayax_product_name, source)\n  );\n\n  if (byName) {\n    return { product: byName, confidence: 'mittel', reason: 'Namensaehnlichkeit gefunden' };\n  }\n\n  return { product: null, confidence: 'pruefen', reason: 'Kein Produkt gefunden' };\n}\n\nconst suggestions = [];\nconst lines = invoice.invoice_lines || [];\n\nfor (const [index, line] of lines.entries()) {\n  const match = findProduct(line);\n  const isKnown = !!match.product;\n  const productKey = isKnown ? clean(match.product.product_key) : keyFromName(line.nayax_product_name || line.source_item);\n  const existingBatchCount = batches.filter(b => clean(b.product_key) === productKey).length;\n  const quantity = parseNumber(line.quantity);\n  const produktart = inferProduktart(line, match.product);\n  const mwstSatz = inferMwstSatz(line, match.product, produktart);\n  const costs = calculateCosts(line, mwstSatz);\n\n  const missing = [];\n  if (!clean(invoice.invoice_id)) missing.push('invoice_id');\n  if (!clean(invoice.supplier)) missing.push('supplier');\n  if (!clean(invoice.purchase_date)) missing.push('purchase_date');\n  if (!clean(line.source_item)) missing.push('source_item');\n  if (!Number.isFinite(quantity) || quantity <= 0) missing.push('quantity');\n  if (!clean(line.nayax_product_name)) missing.push('nayax_product_name');\n\n  const changeType = isKnown ? 'EXISTING_PRODUCT_NEW_BATCH' : 'NEW_PRODUCT_AND_BATCH';\n\n  suggestions.push({\n    created_at: now,\n    source_file_id: invoice.drive_file_id,\n    source_file_name: invoice.drive_file_name,\n    invoice_id: clean(invoice.invoice_id),\n    supplier: clean(invoice.supplier),\n    purchase_date: clean(invoice.purchase_date),\n    line_number: index + 1,\n    source_item: clean(line.source_item),\n    detected_quantity: Number.isFinite(quantity) ? quantity : 0,\n    detected_mhd: clean(line.mhd),\n    detected_unit_cost: costs.brutto || line.unit_cost || '',\n    detected_unit_cost_brutto: costs.brutto,\n    detected_ek_preis_netto: costs.netto,\n    detected_mwst_satz: formatDecimal(mwstSatz),\n    detected_produktart: produktart,\n    mdb_code: clean(line.mdb_code),\n    approval_id: `APP_${invoice.drive_file_id}_${index + 1}`,\n    nayax_product_name: clean(line.nayax_product_name || line.source_item),\n    existing_product_key: isKnown ? productKey : '',\n    existing_product_name: isKnown ? (match.product.internal_product_name || match.product.nayax_product_name || '') : '',\n    suggested_product_key: productKey,\n    suggested_batch_id: batchId(productKey, invoice.purchase_date, existingBatchCount),\n    suggested_storage_location: $('Config - WF2').first().json.default_storage_location || 'Lager',\n    suggested_action: changeType,\n    confidence: missing.length ? 'unvollstaendig' : match.confidence,\n    needs_user_input: missing.length ? 'TRUE' : 'FALSE',\n    missing_fields: missing.join(', '),\n    approved: 'FALSE',\n    processed: 'FALSE',\n    notes: match.reason\n  });\n}\n\nif (!suggestions.length) {\n  throw new Error('Keine Rechnungspositionen erkannt. Datei wird nicht verschoben.');\n}\n\nreturn suggestions.map(s => ({ json: s }));",
         "mode": "runOnceForAllItems"
       },
       "id": "3857452d-d23d-46c3-8e76-bc586e8d7b77",
@@ -673,6 +673,126 @@
             {
               "id": "missing_fields",
               "displayName": "missing_fields",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "detected_unit_cost_brutto",
+              "displayName": "detected_unit_cost_brutto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "detected_ek_preis_netto",
+              "displayName": "detected_ek_preis_netto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "detected_mwst_satz",
+              "displayName": "detected_mwst_satz",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "detected_produktart",
+              "displayName": "detected_produktart",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "unit_cost_brutto",
+              "displayName": "unit_cost_brutto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "ek_preis_netto",
+              "displayName": "ek_preis_netto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "mwst_satz",
+              "displayName": "mwst_satz",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "produktart",
+              "displayName": "produktart",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "final_ek_preis_netto",
+              "displayName": "final_ek_preis_netto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "final_ek_preis_brutto",
+              "displayName": "final_ek_preis_brutto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "final_mwst_satz",
+              "displayName": "final_mwst_satz",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "final_produktart",
+              "displayName": "final_produktart",
               "required": false,
               "defaultMatch": false,
               "display": true,

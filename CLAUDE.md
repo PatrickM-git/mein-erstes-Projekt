@@ -8,7 +8,7 @@ This repository contains an n8n-based vending-machine inventory system for Nayax
 
 The project is not a generic Node.js skeleton anymore. It now contains:
 
-- n8n workflow exports `WF0` to `WF5`
+- n8n workflow exports `WF0` to `WF5` and `WF8`
 - a local Node.js dashboard in `dashboard/`
 - Google Sheets/XLSX working data
 - handover and architecture documentation
@@ -45,6 +45,7 @@ mein-erstes-Projekt/
 |-- WF3 Nayax Lynx FIFO Lagerbestand - manueller Abruf - mit WF4 Integration.json
 |-- WF4 - MDB Produktzuordnung bearbeiten.json
 |-- WF5 - MHD und niedrige Lagercharge ueberwachen.json
+|-- WF8 - GuV Tagesposten Aggregator.json
 |-- nayax_lager_google_sheets_import_aktualisiert_v3_kitkat_2026-05-02.xlsx
 `-- dashboard/
     |-- package.json
@@ -105,14 +106,20 @@ N8N_API_KEY=...
 
 ## Current Next Step
 
-Phase A3: WF1/WF2 erweitern – `mwst_satz` und `ek_preis_netto` aus Rechnungen
+Phase A6: Dashboard GuV-Section
 
-- In WF2 beim Anlegen/Aktualisieren von Lagerchargen das Feld `mwst_satz` schreiben
-  (7 % Snack, 19 % Getraenk – aus Rechnungsposition oder Produkt-Stammdaten)
-- In WF2 den Netto-EK (`ek_preis_netto`) aus dem Brutto-Rechnungsbetrag berechnen
+- Phase A5 ist lokal erledigt: `GET /api/guv` liest `GuV_Tagesposten`, aggregiert nach Zeitraum/Maschine und liefert KPI-Summen, Maschinenliste, Produkttabelle und Rohzeilen.
+- Naechster Schritt: Frontend-GuV-Section bauen:
+  Zeitraum-Selector (Woche/Monat/Quartal/Custom), Maschinen-Dropdown, KPI-Tiles und Produkttabelle.
 
-Danach Phase A4: WF8 GuV-Aggregator bauen (taeglich, schreibt in `GuV_Tagesposten`).
+Offen bleibt zusaetzlich: Phase A3 WF1/WF2 Live-Test/Import ist weiterhin nicht abgeschlossen.
+WF8 existiert live in n8n (`qwpQMhZqDAIs8Wi9`) und wurde lokal als JSON exportiert.
 
-Offene Sicherheitsschuld: Nayax-Bearer-Token im live WF3 (`Nayax - Last Sales`-Node)
-ist noch als statischer Header-Parameter hinterlegt. Auf n8n HTTP-Header-Auth-Credential
-umstellen (n8n → Credentials → HTTP Header Auth → `Nayax Bearer`).
+Spaetere Dashboard-Phase vormerken: Automatenbestand soll im Dashboard pro aktiver
+Maschine/Produkt/MDB-Slot per Plus, Minus oder direkter Zahleneingabe aenderbar sein.
+Die Aenderung muss direkt mit `Produkte.current_machine_qty` der passenden aktiven
+Slotzeile synchronisiert werden (Match ueber `product_slot_id`, alternativ
+`machine_id + mdb_code + product_key`).
+
+Erledigte Sicherheitsschuld: Der Nayax-Bearer-Token im live WF3 wurde am 2026-05-11 auf
+eine n8n HTTP-Header-Auth-Credential `Nayax Bearer` umgestellt.

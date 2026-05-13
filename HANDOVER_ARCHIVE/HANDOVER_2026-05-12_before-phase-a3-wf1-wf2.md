@@ -2,7 +2,7 @@
 
 > Update this file at the end of every session. Archive the previous version to `HANDOVER_ARCHIVE/HANDOVER_<date>.md` before overwriting.
 
-## Stand: 2026-05-13 (Session 5 – Phase A5 Dashboard GuV Endpoint)
+## Stand: 2026-05-11 (Session 3 – GuV-System)
 
 ### Kurzfassung
 
@@ -91,88 +91,6 @@ statischen Header-Parameter auf eine n8n HTTP-Header-Auth-Credential umgestellt.
   und die Mappings fuer `mdb_code_extracted` und `batch_id_abgebucht` korrekt gesetzt.
 - Nutzer hat bestaetigt: WF3 laeuft danach komplett.
 
-#### Codex-Nachtrag 2026-05-12 – Phase A3 WF1/WF2 lokal implementiert
-
-Lokale Workflow-JSONs wurden erweitert:
-
-- `WF1 - Rechnungseingang automatisch mit Claude.json`
-  - Claude-Rechnungsprompt erweitert um:
-    `unit_cost_brutto`, `unit_cost_netto`, `mwst_satz`, `produktart`
-  - Rechnungspruef-Code berechnet/normalisiert:
-    - `detected_unit_cost_brutto`
-    - `detected_ek_preis_netto`
-    - `detected_mwst_satz`
-    - `detected_produktart`
-  - Fallback-Regel:
-    - Snacks/Suesswaren/Lebensmittel -> 7 %
-    - Getraenke -> 19 %
-
-- `WF2 - Smart Product Selection - Rechnungsvorschlaege freigeben.json`
-  - Freigabeformular zeigt nun EK brutto, EK netto, MwSt-Satz und Produktart.
-  - Neue Override-Felder:
-    - `unit_cost_netto_override`
-    - `mwst_satz_override`
-    - `produktart_override`
-  - `Code - Entscheidung auswerten` berechnet aus Brutto-EK und MwSt den Netto-EK.
-  - `Lagerchargen.unit_cost` wird ab jetzt als Netto-EK geschrieben.
-  - `Lagerchargen.mwst_satz` wird geschrieben.
-  - Neue Produkte bekommen `Produkte.produktart`.
-  - `Rechnungseingang_Pruefung` bekommt zusaetzliche Audit-/Finalfelder fuer Brutto/Netto/MwSt/Produktart.
-
-Validierung lokal:
-
-- WF1/WF2 JSON parsebar.
-- Geaenderte Code-Nodes per `node --check` geprueft:
-  - `Code - Rechnung gegen Stammdaten pruefen`
-  - `Code - Produktvorschlaege vorbereiten`
-  - `Code - Entscheidung auswerten`
-- WF1/WF2 separat auf einfache Secret-Muster geprueft: keine Treffer.
-
-Noch nicht erledigt:
-
-- Kein Live-n8n-Import/Test erfolgt. In diesem frisch geklonten Workspace lagen weder
-  `dashboard/.dashboard-config.json` noch `dashboard/.env.local` vor.
-- Vor Live-Test muessen die neuen Google-Sheets-Spalten in `Rechnungseingang_Pruefung`
-  vorhanden sein bzw. der jeweilige Google-Sheets-Node in n8n nach Spaltenaenderung
-  refreshed und gespeichert werden.
-
-#### Codex-Nachtrag 2026-05-13 – Phase A5 Dashboard `/api/guv` lokal implementiert
-
-Neue lokale Dashboard-Funktion:
-
-- `dashboard/server.js`
-  - `GuV_Tagesposten` und `GuV_Konfiguration` in die Google-Sheets-Live-Leseliste aufgenommen.
-  - Neuer Endpoint `GET /api/guv`.
-  - Query-Filter:
-    - `range=week|month|quarter|year|all` (Default: `month`)
-    - `start`/`end` fuer Custom-Zeitraeume
-    - `machine_id` fuer Maschinenfilter
-  - Response enthaelt:
-    - `kpis`: Umsatz brutto, Wareneinsatz brutto, GuV, verkaufte Menge, Posten-/Produkt-/Maschinenanzahl
-    - `machines`: aggregierte Maschinenliste
-    - `products`: aggregierte Produkttabelle
-    - `rows`: bis zu 500 passende Rohzeilen
-    - `source`: Live-/Fallback-Quelle und Zeilenzaehler
-  - `range=all` filtert jetzt wirklich ungegrenzt.
-  - Lokale XLSX bleibt Fallback, kann aber mangels neuer GuV-Tabs leer sein.
-
-Workflow-Sync:
-
-- Live-WF8 wurde per n8n MCP gefunden und nach Git exportiert:
-  - ID: `qwpQMhZqDAIs8Wi9`
-  - Name: `WF8 - GuV Tagesposten Aggregator`
-  - Status: inactive
-  - Lokale Datei: `WF8 - GuV Tagesposten Aggregator.json`
-
-Validierung:
-
-- `node --check dashboard/server.js` erfolgreich.
-- `WF8 - GuV Tagesposten Aggregator.json` lokal parsebar.
-- Lokaler Test auf Ausweichport `8878`:
-  - `GET /api/guv?range=all` -> HTTP 200
-  - Google Sheets live erreichbar
-  - `GuV_Tagesposten` hat aktuell 3 Statuszeilen ohne Datum (`Keine neuen Aggregationen`), daher `rowsMatched=0`.
-
 ### Was bisher gebaut wurde
 
 #### Workflows
@@ -180,14 +98,12 @@ Validierung:
 - `WF0` – product_slot_id Backfill (einmalig, abgeschlossen)
 - `WF1` – Rechnungseingang automatisch mit Claude
 - `WF2` – Smart Product Selection / Rechnungsvorschlaege
-  - Phase A3 lokal: MwSt/Produktart/Netto-EK vorbereitet
 - `WF3` – Nayax Lynx FIFO Lagerbestand **(Phase A2 erweitert)**
   - Jetzt: `vk_preis_brutto`, `umsatz_brutto`, `mdb_code_extracted`, `batch_id_abgebucht`
   - Nayax-Credential: erledigt, live WF3 nutzt n8n HTTP-Header-Auth-Credential `Nayax Bearer`
 - `WF4` – MDB Produktzuordnung bearbeiten (Slot-Historisierung)
 - `WF5` – MHD und niedrige Lagercharge ueberwachen
 - `WF7` – GuV Sheets Setup (ID: `d6JoXqhfTOuvRKVv`, einmalig ausgefuehrt)
-- `WF8` – GuV Tagesposten Aggregator (ID: `qwpQMhZqDAIs8Wi9`, live vorhanden, lokal exportiert)
 
 #### Dashboard (`dashboard/`)
 
@@ -201,53 +117,35 @@ Validierung:
 - Phase A1: GuV-Sheets in Google Sheets angelegt, Spaltenkoepfe gesetzt.
 - Phase A2: WF3 live in n8n aktualisiert, neue Felder werden beim naechsten Verkaufslauf
   in `Verarbeitete_Transaktionen` geschrieben.
-- Phase A3: WF1/WF2 lokal erweitert; Live-Import und Testlauf stehen noch aus.
-- Phase A5: Dashboard-Endpoint `/api/guv` lokal implementiert und gegen Google-Sheets-Livezugriff getestet.
 - Google-Sheets-Credentials korrekt in WF3 hinterlegt.
 - Nayax-Bearer-Token ist jetzt als n8n HTTP-Header-Auth-Credential `Nayax Bearer` hinterlegt;
   WF3 nutzt diese Credential statt eines statischen Klartext-Headers.
 - `Google Sheets - Transaktionen anhaengen` hat aktualisierte Spalten-Mappings und appends
   wieder erfolgreich in `Verarbeitete_Transaktionen`.
 
-### Naechste konkrete Schritte
+### Naechste konkrete Schritte (nach Phase A2)
 
-#### Phase A3 Live-Test / Import – offen
-- Neue Spalten in `Rechnungseingang_Pruefung` sicherstellen:
-  `detected_unit_cost_brutto, detected_ek_preis_netto, detected_mwst_satz,
-  detected_produktart, unit_cost_brutto, ek_preis_netto, mwst_satz, produktart,
-  final_ek_preis_netto, final_ek_preis_brutto, final_mwst_satz, final_produktart`
-- In `Produkte` muss `produktart` vorhanden sein.
-- In `Lagerchargen` muss `mwst_satz` vorhanden sein.
-- WF1 und WF2 in n8n importieren/ersetzen oder per API patchen.
-- In n8n die betroffenen Google-Sheets-Nodes oeffnen, Columns/Fields refreshen und speichern.
-- Testrechnung durch WF1 -> WF2 laufen lassen.
-- Pruefen:
-  - Brutto-EK wird aus Rechnung uebernommen.
-  - Netto-EK wird korrekt berechnet.
-  - `Lagerchargen.unit_cost` enthaelt Netto-EK.
-  - `Lagerchargen.mwst_satz` ist 7 oder 19.
-  - Neue Produktzeile enthaelt `produktart`.
+#### Phase A3: WF1/WF2 erweitern – MwSt und Netto-EK aus Rechnung
+- In WF2 beim Anlegen/Aktualisieren von Lagerchargen: `mwst_satz` schreiben
+  (7 % fuer Snacks, 19 % fuer Getraenke – aus Rechnungsposition oder aus Produkt-Stammdaten)
+- In WF2: Netto-EK (`ek_preis_netto`) aus Rechnungsbetrag / (1 + MwSt) berechnen
 
-#### Phase A4/A5: WF8 und Dashboard `/api/guv` – lokal erledigt
-- WF8 existiert live in n8n und wurde lokal als JSON exportiert.
-- `/api/guv` liest `GuV_Tagesposten`, aggregiert nach Zeitraum und Maschine und gibt KPI-Daten zurueck.
-- Noch offen: WF8 produktiv aktivieren/testen, sobald echte GuV-Zeilen entstehen sollen.
+#### Phase A4: WF8 GuV-Aggregator bauen
+- Taeglich per Cron (z.B. 02:00 Uhr)
+- Fuer jeden Verkaufstag / jede Maschine: FIFO-Wareneinsatz berechnen
+  - `wareneinsatz_brutto = sum(qty * ek_preis_brutto)` aus abgebuchten Chargen
+  - `kleinunternehmer_aktiv` aus `GuV_Konfiguration` lesen
+  - `guv = umsatz_brutto - wareneinsatz_brutto`
+- Ergebnisse in `GuV_Tagesposten` schreiben
+
+#### Phase A5: Dashboard `/api/guv` Endpoint
+- Liest `GuV_Tagesposten`, aggregiert nach Zeitraum und Maschine
+- Gibt KPI-Tiles zurueck: Umsatz, Wareneinsatz, GuV, Anzahl Verkaeufe
 
 #### Phase A6: Dashboard GuV-Section
 - Zeitraum-Selector (Woche/Monat/Quartal/Custom)
 - Maschinen-Dropdown
 - KPI-Tiles + Produkttabelle
-
-#### Spaetere Dashboard-Phase: Automatenbestand manuell pflegen
-- Dashboard soll pro aktiver Slotzeile den Automatenbestand editierbar machen:
-  - `+` fuer Bestand erhoehen
-  - `-` fuer Bestand reduzieren
-  - direkte Zahleneingabe fuer absoluten Bestand
-- Jede Aenderung muss direkt nach `Produkte.current_machine_qty` synchronisiert werden.
-- Zielzeile eindeutig ueber `product_slot_id` matchen; Fallback nur wenn noetig:
-  `machine_id + mdb_code + product_key` der aktiven MDB-Slotnummer.
-- Wichtig: Diese Dashboard-Aktion darf nicht `Lagerchargen.remaining_qty` veraendern;
-  sie beschreibt den Automatenbestand im konkreten Slot, nicht den Lagerchargenbestand.
 
 #### Phase A7: WF5 Tagesumsatz in Mail
 - WF5 Mail um Tagesverkaufsliste pro Maschine + Gesamtsumme erweitern
@@ -263,15 +161,8 @@ Validierung:
 - Bei zukuenftigen Google-Sheets-Spaltenerweiterungen in n8n immer den betroffenen
   Google-Sheets-Node oeffnen, Fields/Columns refreshen und neu speichern. Sonst kann n8n mit
   `Column names were updated after the node's setup` abbrechen.
-- Die lokale XLSX-Datei ist aelter als die live Google-Sheets-Struktur und enthaelt die neuen
-  GuV-/A3-Spalten noch nicht vollstaendig.
-- Achtung fuer WF8: Neue `Lagerchargen.unit_cost`-Werte aus WF2 sind Netto-EK. Aeltere
-  Chargen koennen historisch noch Netto-/Brutto-uneindeutig sein und muessen beim
-  GuV-Aggregator vorsichtig behandelt oder einmalig bereinigt werden.
 - WF5 lokal korrigiert (Bestandslogik), aber noch nicht in n8n live getestet/importiert.
-- Phase A3 lokal implementiert, aber noch nicht live getestet/importiert.
-- Phase A6–A8 noch offen.
-- Phase A3 Live-Test/Import bleibt trotz A5-Fortschritt offen, weil WF1/WF2 live noch nicht sicher auf dem lokalen A3-Stand sind.
+- Phase A3–A8 noch offen.
 - Langfristig: Trennung von Produktstamm und Slot-Historie waere sauberer.
 
 ### Google Sheets – Tabs im Ueberblick

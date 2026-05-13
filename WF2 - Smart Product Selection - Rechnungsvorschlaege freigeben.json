@@ -130,7 +130,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const approvalId = String($('naechsten offenen Vorschlag waehlen').first().json.approval_id ?? '').trim();\nconst rows = $items('Google Sheets - Pruefung lesen').map(i => i.json);\nconst products = $items('Google Sheets - Produkte lesen').map(i => i.json);\n\nfunction clean(v) {\n  return String(v ?? '').replace(/\\n/g, ' ').replace(/\\s+/g, ' ').trim();\n}\n\nfunction normalize(v) {\n  return clean(v)\n    .toLowerCase()\n    .replace(/&/g, 'und')\n    .replace(/\\+/g, 'plus')\n    .replace(/ä/g, 'ae')\n    .replace(/ö/g, 'oe')\n    .replace(/ü/g, 'ue')\n    .replace(/ß/g, 'ss')\n    .replace(/[^a-z0-9]/g, '');\n}\n\nfunction tokens(v) {\n  const n = normalize(v);\n  const parts = n.match(/[a-z]+|[0-9]+/g) || [];\n  return [...new Set(parts.filter(t => t.length >= 2))];\n}\n\nfunction scoreProduct(product, queryA, queryB) {\n  const productText = [\n    product.product_key,\n    product.internal_product_name,\n    product.nayax_product_name,\n    product.mdb_code\n  ].map(clean).join(' ');\n\n  const pNorm = normalize(productText);\n  const q1 = normalize(queryA);\n  const q2 = normalize(queryB);\n\n  let score = 0;\n\n  if (q1 && pNorm.includes(q1)) score += 70;\n  if (q2 && pNorm.includes(q2)) score += 70;\n\n  const internalNorm = normalize(product.internal_product_name);\n  const nayaxNorm = normalize(product.nayax_product_name);\n\n  if (internalNorm && q1.includes(internalNorm)) score += 55;\n  if (nayaxNorm && q2.includes(nayaxNorm)) score += 55;\n\n  const queryTokens = [...new Set([...tokens(queryA), ...tokens(queryB)])];\n  const productTokens = tokens(productText);\n  const overlap = queryTokens.filter(t => productTokens.includes(t));\n  score += overlap.length * 12;\n\n  if (clean(product.active).toUpperCase() === 'TRUE' || clean(product.active) === '') score += 5;\n\n  return Math.min(score, 99);\n}\n\nfunction keyFromName(name) {\n  const base = clean(name)\n    .toUpperCase()\n    .replace(/Ä/g, 'AE')\n    .replace(/Ö/g, 'OE')\n    .replace(/Ü/g, 'UE')\n    .replace(/ẞ/g, 'SS')\n    .replace(/ß/g, 'SS')\n    .replace(/&/g, 'UND')\n    .replace(/\\+/g, 'PLUS')\n    .replace(/[^A-Z0-9]+/g, '_')\n    .replace(/^_+|_+$/g, '');\n  return `SKU_${base || 'UNBEKANNT'}`;\n}\n\nif (!approvalId) {\n  throw new Error('approval_id fehlt.');\n}\n\nconst source = rows.find(r => clean(r.approval_id) === approvalId);\n\nif (!source) {\n  throw new Error('Kein Eintrag in Rechnungseingang_Pruefung gefunden fuer approval_id: ' + approvalId);\n}\n\nif (clean(source.processed).toUpperCase() === 'TRUE') {\n  throw new Error('Dieser Vorschlag wurde bereits verarbeitet. Keine doppelte Lagercharge angelegt.');\n}\n\nconst sourceItem = clean(source.source_item || source.raw_item_name);\nconst nayaxName = clean(source.nayax_product_name || source.recognized_product_name || sourceItem);\nconst suggestedProductKey = clean(source.suggested_product_key) || keyFromName(nayaxName || sourceItem);\nconst quantity = clean(source.detected_quantity || source.quantity);\nconst unitCost = clean(source.detected_unit_cost || source.unit_cost);\nconst mhd = clean(source.detected_mhd || source.mhd_invoice || source.mhd_final);\nconst storage = clean(source.suggested_storage_location || $('Config - WF3').first().json.default_storage_location || 'Lager');\n\nconst allProducts = products\n  .filter(p => clean(p.product_key))\n  .map(p => ({\n    product_key: clean(p.product_key),\n    internal_product_name: clean(p.internal_product_name),\n    nayax_product_name: clean(p.nayax_product_name),\n    mdb_code: clean(p.mdb_code),\n    sale_price_eur: clean(p.sale_price_eur),\n    active: clean(p.active),\n    notes: clean(p.notes)\n  }));\n\nconst ranked = products\n  .map(p => ({ product: p, score: scoreProduct(p, sourceItem, nayaxName) }))\n  .filter(x => clean(x.product.product_key))\n  .sort((a, b) => b.score - a.score)\n  .slice(0, 3);\n\nconst candidates = ranked.map((x, idx) => {\n  const p = x.product;\n  return {\n    number: String(idx + 1),\n    product_key: clean(p.product_key),\n    internal_product_name: clean(p.internal_product_name),\n    nayax_product_name: clean(p.nayax_product_name),\n    mdb_code: clean(p.mdb_code),\n    sale_price_eur: clean(p.sale_price_eur),\n    score: x.score\n  };\n});\n\nconst candidateText = candidates.length\n  ? candidates.map(c =>\n      `${c.number} = ${c.product_key} | ${c.internal_product_name || c.nayax_product_name || '(ohne Name)'} | Nayax: ${c.nayax_product_name || '(leer)'} | Treffer: ${c.score}%`\n    ).join('\\n')\n  : 'Keine passenden Produktkandidaten gefunden. Verwende KEY fuer ein anderes vorhandenes Produkt oder NEW fuer ein neues Produkt.';\n\nconst formInfo = [\n  `PRODUKTVORSCHLAEGE:`,\n  candidateText,\n  ``,\n  `AUSWAHL:`,\n  `1, 2 oder 3 = einen vorgeschlagenen vorhandenen Produktdatensatz übernehmen`,\n  `KEY = anderes vorhandenes Produkt per product_key angeben`,\n  `NEW = neues Produkt anlegen`,\n  `REJECT = Vorschlag ablehnen`,\n  ``,\n  `RECHNUNGSPOSITION:`,\n  `${sourceItem}`,\n  ``,\n  `Erkannter Nayax-Vorschlag aus Rechnung: ${nayaxName}`,\n  `Menge: ${quantity}`,\n  `Einzelkosten: ${unitCost}`,\n  `MHD: ${mhd || '(leer)'}`,\n  `Lagerort: ${storage}`,\n  ``,\n  `approval_id: ${approvalId}`,\n  ``,\n  `Hinweis:`,\n  `Bei 1, 2 oder 3 wird der Nayax-Name aus dem vorhandenen Produkt übernommen.`,\n  `Das Feld new_nayax_product_name ist nur für NEW relevant.`\n].join('\\n');\n\nreturn [{\n  json: {\n    approval_id: approvalId,\n    source,\n    candidates,\n    all_products: allProducts,\n    form_info: formInfo,\n    default_alias_name: sourceItem,\n    default_new_nayax_product_name: nayaxName,\n    default_manual_existing_product_key: '',\n    default_quantity: quantity,\n    default_unit_cost: unitCost,\n    default_mhd: mhd,\n    default_storage_location: storage,\n    suggested_product_key: suggestedProductKey\n  }\n}];",
+        "jsCode": "const approvalId = String($('naechsten offenen Vorschlag waehlen').first().json.approval_id ?? '').trim();\nconst rows = $items('Google Sheets - Pruefung lesen').map(i => i.json);\nconst products = $items('Google Sheets - Produkte lesen').map(i => i.json);\n\nfunction clean(v) {\n  return String(v ?? '').replace(/\\n/g, ' ').replace(/\\s+/g, ' ').trim();\n}\n\nfunction first(...vals) {\n  return vals.map(clean).find(v => v !== '') || '';\n}\n\nfunction normalize(v) {\n  return clean(v)\n    .toLowerCase()\n    .replace(/&/g, 'und')\n    .replace(/\\+/g, 'plus')\n    .replace(/ä/g, 'ae')\n    .replace(/ö/g, 'oe')\n    .replace(/ü/g, 'ue')\n    .replace(/ß/g, 'ss')\n    .replace(/[^a-z0-9]/g, '');\n}\n\nfunction parseNumber(v) {\n  const raw = clean(v).replace(/[^\\d,.\\-]/g, '');\n  if (!raw) return NaN;\n  let normalized = raw;\n  const lastComma = raw.lastIndexOf(',');\n  const lastDot = raw.lastIndexOf('.');\n  if (lastComma >= 0 && lastDot >= 0) {\n    normalized = lastComma > lastDot\n      ? raw.replace(/\\./g, '').replace(',', '.')\n      : raw.replace(/,/g, '');\n  } else if (lastComma >= 0) {\n    normalized = raw.replace(',', '.');\n  }\n  const value = Number(normalized);\n  return Number.isFinite(value) ? value : NaN;\n}\n\nfunction formatDecimal(v) {\n  if (!Number.isFinite(v)) return '';\n  return String(Math.round(v * 10000) / 10000);\n}\n\nfunction normalizeProduktart(v) {\n  const n = normalize(v);\n  if (!n) return '';\n  if (['getraenk', 'getraenke', 'drink', 'drinks', 'beverage', 'beverages'].includes(n)) return 'getraenk';\n  if (['snack', 'snacks', 'food', 'lebensmittel', 'suessware', 'suesswaren'].includes(n)) return 'snack';\n  return '';\n}\n\nfunction inferProduktart(source, product) {\n  const explicit = normalizeProduktart(first(source.detected_produktart, source.produktart, product?.produktart));\n  if (explicit) return explicit;\n\n  const text = normalize([\n    source.source_item,\n    source.raw_item_name,\n    source.nayax_product_name,\n    source.recognized_product_name,\n    product?.internal_product_name,\n    product?.nayax_product_name,\n  ].map(clean).join(' '));\n\n  const drinkHints = [\n    'getraenk', 'getraenke', 'drink', 'cola', 'fanta', 'sprite', 'mezzo', 'wasser',\n    'water', 'saft', 'juice', 'eistee', 'icetea', 'mate', 'redbull', 'energy',\n    'kaffee', 'cappuccino', 'espresso', 'bier', 'limo', 'schorle',\n  ];\n\n  return drinkHints.some(hint => text.includes(hint)) ? 'getraenk' : 'snack';\n}\n\nfunction normalizeMwst(v) {\n  const parsed = parseNumber(v);\n  if (!Number.isFinite(parsed) || parsed <= 0) return NaN;\n  const percent = parsed > 0 && parsed < 1 ? parsed * 100 : parsed;\n  return Math.round(percent * 100) / 100;\n}\n\nfunction inferMwstSatz(source, product, produktart) {\n  const explicit = normalizeMwst(first(source.detected_mwst_satz, source.mwst_satz, product?.mwst_satz));\n  if (Number.isFinite(explicit)) return explicit;\n  return produktart === 'getraenk' ? 19 : 7;\n}\n\nfunction calculateCosts(source, mwstSatz) {\n  const bruttoRaw = first(source.detected_unit_cost_brutto, source.unit_cost_brutto, source.detected_unit_cost, source.unit_cost);\n  const nettoRaw = first(source.detected_ek_preis_netto, source.ek_preis_netto, source.unit_cost_netto);\n  let brutto = parseNumber(bruttoRaw);\n  let netto = parseNumber(nettoRaw);\n  const factor = 1 + (Number(mwstSatz) || 0) / 100;\n\n  if (!Number.isFinite(brutto) && Number.isFinite(netto) && factor > 0) {\n    brutto = netto * factor;\n  }\n  if (!Number.isFinite(netto) && Number.isFinite(brutto) && factor > 0) {\n    netto = brutto / factor;\n  }\n\n  return {\n    brutto: formatDecimal(brutto),\n    netto: formatDecimal(netto),\n  };\n}\n\nfunction tokens(v) {\n  const n = normalize(v);\n  const parts = n.match(/[a-z]+|[0-9]+/g) || [];\n  return [...new Set(parts.filter(t => t.length >= 2))];\n}\n\nfunction scoreProduct(product, queryA, queryB) {\n  const productText = [\n    product.product_key,\n    product.internal_product_name,\n    product.nayax_product_name,\n    product.mdb_code\n  ].map(clean).join(' ');\n\n  const pNorm = normalize(productText);\n  const q1 = normalize(queryA);\n  const q2 = normalize(queryB);\n\n  let score = 0;\n\n  if (q1 && pNorm.includes(q1)) score += 70;\n  if (q2 && pNorm.includes(q2)) score += 70;\n\n  const internalNorm = normalize(product.internal_product_name);\n  const nayaxNorm = normalize(product.nayax_product_name);\n\n  if (internalNorm && q1.includes(internalNorm)) score += 55;\n  if (nayaxNorm && q2.includes(nayaxNorm)) score += 55;\n\n  const queryTokens = [...new Set([...tokens(queryA), ...tokens(queryB)])];\n  const productTokens = tokens(productText);\n  const overlap = queryTokens.filter(t => productTokens.includes(t));\n  score += overlap.length * 12;\n\n  if (clean(product.active).toUpperCase() === 'TRUE' || clean(product.active) === '') score += 5;\n\n  return Math.min(score, 99);\n}\n\nfunction keyFromName(name) {\n  const base = clean(name)\n    .toUpperCase()\n    .replace(/Ä/g, 'AE')\n    .replace(/Ö/g, 'OE')\n    .replace(/Ü/g, 'UE')\n    .replace(/ẞ/g, 'SS')\n    .replace(/ß/g, 'SS')\n    .replace(/&/g, 'UND')\n    .replace(/\\+/g, 'PLUS')\n    .replace(/[^A-Z0-9]+/g, '_')\n    .replace(/^_+|_+$/g, '');\n  return `SKU_${base || 'UNBEKANNT'}`;\n}\n\nif (!approvalId) {\n  throw new Error('approval_id fehlt.');\n}\n\nconst source = rows.find(r => clean(r.approval_id) === approvalId);\n\nif (!source) {\n  throw new Error('Kein Eintrag in Rechnungseingang_Pruefung gefunden fuer approval_id: ' + approvalId);\n}\n\nif (clean(source.processed).toUpperCase() === 'TRUE') {\n  throw new Error('Dieser Vorschlag wurde bereits verarbeitet. Keine doppelte Lagercharge angelegt.');\n}\n\nconst sourceItem = clean(source.source_item || source.raw_item_name);\nconst nayaxName = clean(source.nayax_product_name || source.recognized_product_name || sourceItem);\nconst suggestedProductKey = clean(source.suggested_product_key) || keyFromName(nayaxName || sourceItem);\nconst quantity = clean(source.detected_quantity || source.quantity);\nconst sourceProduct = products.find(p => clean(p.product_key) === clean(source.existing_product_key || source.matched_product_key || suggestedProductKey));\nconst produktart = inferProduktart(source, sourceProduct);\nconst mwstSatz = inferMwstSatz(source, sourceProduct, produktart);\nconst costs = calculateCosts(source, mwstSatz);\nconst unitCost = costs.brutto || clean(source.detected_unit_cost || source.unit_cost);\nconst mhd = clean(source.detected_mhd || source.mhd_invoice || source.mhd_final);\nconst storage = clean(source.suggested_storage_location || $('Config - WF3').first().json.default_storage_location || 'Lager');\n\nconst allProducts = products\n  .filter(p => clean(p.product_key))\n  .map(p => ({\n    product_key: clean(p.product_key),\n    internal_product_name: clean(p.internal_product_name),\n    nayax_product_name: clean(p.nayax_product_name),\n    mdb_code: clean(p.mdb_code),\n    sale_price_eur: clean(p.sale_price_eur),\n    produktart: clean(p.produktart),\n    mwst_satz: clean(p.mwst_satz),\n    active: clean(p.active),\n    notes: clean(p.notes)\n  }));\n\nconst ranked = products\n  .map(p => ({ product: p, score: scoreProduct(p, sourceItem, nayaxName) }))\n  .filter(x => clean(x.product.product_key))\n  .sort((a, b) => b.score - a.score)\n  .slice(0, 3);\n\nconst candidates = ranked.map((x, idx) => {\n  const p = x.product;\n  return {\n    number: String(idx + 1),\n    product_key: clean(p.product_key),\n    internal_product_name: clean(p.internal_product_name),\n    nayax_product_name: clean(p.nayax_product_name),\n    mdb_code: clean(p.mdb_code),\n    sale_price_eur: clean(p.sale_price_eur),\n    produktart: clean(p.produktart),\n    mwst_satz: clean(p.mwst_satz),\n    score: x.score\n  };\n});\n\nconst candidateText = candidates.length\n  ? candidates.map(c =>\n      `${c.number} = ${c.product_key} | ${c.internal_product_name || c.nayax_product_name || '(ohne Name)'} | Nayax: ${c.nayax_product_name || '(leer)'} | Treffer: ${c.score}%`\n    ).join('\\n')\n  : 'Keine passenden Produktkandidaten gefunden. Verwende KEY fuer ein anderes vorhandenes Produkt oder NEW fuer ein neues Produkt.';\n\nconst formInfo = [\n  `PRODUKTVORSCHLAEGE:`,\n  candidateText,\n  ``,\n  `AUSWAHL:`,\n  `1, 2 oder 3 = einen vorgeschlagenen vorhandenen Produktdatensatz uebernehmen`,\n  `KEY = anderes vorhandenes Produkt per product_key angeben`,\n  `NEW = neues Produkt anlegen`,\n  `REJECT = Vorschlag ablehnen`,\n  ``,\n  `RECHNUNGSPOSITION:`,\n  `${sourceItem}`,\n  ``,\n  `Erkannter Nayax-Vorschlag aus Rechnung: ${nayaxName}`,\n  `Menge: ${quantity}`,\n  `EK brutto: ${unitCost || '(leer)'}`,\n  `EK netto: ${costs.netto || '(leer)'}`,\n  `MwSt-Satz: ${formatDecimal(mwstSatz)}%`,\n  `Produktart: ${produktart}`,\n  `MHD: ${mhd || '(leer)'}`,\n  `Lagerort: ${storage}`,\n  ``,\n  `approval_id: ${approvalId}`,\n  ``,\n  `Hinweis:`,\n  `Bei 1, 2 oder 3 wird der Nayax-Name aus dem vorhandenen Produkt uebernommen.`,\n  `Das Feld new_nayax_product_name ist nur fuer NEW relevant.`\n].join('\\n');\n\nreturn [{\n  json: {\n    approval_id: approvalId,\n    source,\n    candidates,\n    all_products: allProducts,\n    form_info: formInfo,\n    default_alias_name: sourceItem,\n    default_new_nayax_product_name: nayaxName,\n    default_manual_existing_product_key: '',\n    default_quantity: quantity,\n    default_unit_cost: unitCost,\n    default_unit_cost_brutto: costs.brutto || unitCost,\n    default_unit_cost_netto: costs.netto,\n    default_mwst_satz: formatDecimal(mwstSatz),\n    default_produktart: produktart,\n    default_mhd: mhd,\n    default_storage_location: storage,\n    suggested_product_key: suggestedProductKey\n  }\n}];",
         "mode": "runOnceForAllItems"
       },
       "id": "c4422d8b-bff9-4e92-9d7f-4f048a669089",
@@ -171,7 +171,24 @@
             },
             {
               "fieldLabel": "unit_cost_override",
-              "defaultValue": "={{ $json.default_unit_cost }}"
+              "defaultValue": "={{ $json.default_unit_cost_brutto }}",
+              "placeholder": "EK brutto pro Einheit; Netto wird aus MwSt berechnet"
+            },
+            {
+              "fieldLabel": "unit_cost_netto_override",
+              "defaultValue": "={{ $json.default_unit_cost_netto }}",
+              "placeholder": "Optional: Netto-EK direkt setzen"
+            },
+            {
+              "fieldLabel": "mwst_satz_override",
+              "fieldType": "number",
+              "defaultValue": "={{ $json.default_mwst_satz }}",
+              "placeholder": "7 oder 19"
+            },
+            {
+              "fieldLabel": "produktart_override",
+              "defaultValue": "={{ $json.default_produktart }}",
+              "placeholder": "snack oder getraenk"
             },
             {
               "fieldLabel": "mhd_override",
@@ -248,7 +265,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const prepared = $('Code - Produktvorschlaege vorbereiten').first().json;\nconst formDecision = $('Form - Produktentscheidung').first().json;\nconst currentInput = $input.first().json;\n\nfunction clean(v) {\n  return String(v ?? '').replace(/\\n/g, ' ').replace(/\\s+/g, ' ').trim();\n}\n\nfunction normalize(v) {\n  return clean(v)\n    .toLowerCase()\n    .replace(/&/g, 'und')\n    .replace(/\\+/g, 'plus')\n    .replace(/ä/g, 'ae')\n    .replace(/ö/g, 'oe')\n    .replace(/ü/g, 'ue')\n    .replace(/ß/g, 'ss')\n    .replace(/[^a-z0-9]/g, '');\n}\n\nfunction first(...vals) {\n  return vals.map(clean).find(v => v !== '') || '';\n}\n\nfunction keyFromName(name) {\n  const base = clean(name)\n    .toUpperCase()\n    .replace(/Ä/g, 'AE')\n    .replace(/Ö/g, 'OE')\n    .replace(/Ü/g, 'UE')\n    .replace(/ẞ/g, 'SS')\n    .replace(/ß/g, 'SS')\n    .replace(/&/g, 'UND')\n    .replace(/\\+/g, 'PLUS')\n    .replace(/[^A-Z0-9]+/g, '_')\n    .replace(/^_+|_+$/g, '');\n  return `SKU_${base || 'UNBEKANNT'}`;\n}\n\nconst choice = clean(formDecision.Auswahl).toUpperCase();\n\nif (!['1', '2', '3', 'KEY', 'NEW', 'REJECT'].includes(choice)) {\n  throw new Error('Ungueltige Auswahl. Erlaubt sind 1, 2, 3, KEY, NEW oder REJECT.');\n}\n\nconst source = prepared.source;\nconst now = new Date().toISOString();\n\nif (choice === 'REJECT') {\n  return [{\n    json: {\n      approval_id: prepared.approval_id,\n      decision: 'reject',\n      rejected: true,\n      processed_at: now,\n      status: 'rejected',\n      notes: clean(formDecision.notes || source.notes),\n\n      source_file: clean(source.source_file_name || source.source_file),\n      source_file_id: clean(source.source_file_id),\n      source_file_name: clean(source.source_file_name),\n\n      invoice_number: clean(source.invoice_number || source.invoice_id),\n      invoice_date: clean(source.invoice_date || source.purchase_date),\n      invoice_id: clean(source.invoice_id),\n      invoice_key: clean(source.invoice_key),\n\n      supplier: clean(source.supplier),\n      purchase_date: clean(source.purchase_date),\n      line_number: clean(source.line_number),\n      source_item: clean(source.source_item),\n      raw_item_name: clean(source.source_item || source.raw_item_name),\n\n      recognized_product_name: clean(source.recognized_product_name || source.nayax_product_name),\n      suggested_product_key: clean(source.suggested_product_key),\n      matched_product_key: clean(source.matched_product_key),\n\n      quantity: clean(source.detected_quantity || source.quantity),\n      unit_cost: clean(source.detected_unit_cost || source.unit_cost),\n      mhd_invoice: clean(source.detected_mhd || source.mhd_invoice),\n      mhd_final: clean(source.mhd_final),\n\n      confidence: 'abgelehnt_manuell',\n      mdb_code: clean(source.mdb_code),\n      nayax_product_name: clean(source.nayax_product_name),\n\n      existing_product_key: clean(source.existing_product_key),\n      existing_product_name: clean(source.existing_product_name),\n\n      suggested_batch_id: clean(source.suggested_batch_id),\n      suggested_storage_location: clean(source.suggested_storage_location),\n      suggested_action: clean(source.suggested_action),\n\n      needs_user_input: clean(source.needs_user_input),\n      missing_fields: clean(source.missing_fields),\n\n      detected_quantity: clean(source.detected_quantity),\n      detected_mhd: clean(source.detected_mhd),\n      detected_unit_cost: clean(source.detected_unit_cost),\n\n      final_product_key: '',\n      final_product_name: '',\n      final_mdb_code: '',\n      final_sale_price_eur: '',\n      final_quantity: '',\n      final_mhd: '',\n      final_unit_cost: '',\n      final_storage_location: '',\n      error_message: ''\n    }\n  }];\n}\n\nlet selectedProduct = null;\nlet decision = '';\n\nif (['1', '2', '3'].includes(choice)) {\n  const candidate = prepared.candidates.find(c => c.number === choice);\n\n  if (!candidate) {\n    throw new Error('Kandidat nicht gefunden fuer Auswahl: ' + choice);\n  }\n\n  selectedProduct = {\n    product_key: clean(candidate.product_key),\n    internal_product_name: clean(candidate.internal_product_name),\n    nayax_product_name: clean(candidate.nayax_product_name),\n    mdb_code: clean(candidate.mdb_code),\n    sale_price_eur: clean(candidate.sale_price_eur)\n  };\n\n  decision = 'use_existing_product';\n}\n\nif (choice === 'KEY') {\n  const manualKey = clean(formDecision.manual_existing_product_key);\n\n  if (!manualKey) {\n    throw new Error('Bitte manual_existing_product_key angeben, wenn KEY gewaehlt wurde.');\n  }\n\n  const found = prepared.all_products.find(p => clean(p.product_key) === manualKey);\n\n  if (!found) {\n    throw new Error('Kein vorhandenes Produkt mit diesem product_key gefunden: ' + manualKey);\n  }\n\n  selectedProduct = {\n    product_key: clean(found.product_key),\n    internal_product_name: clean(found.internal_product_name),\n    nayax_product_name: clean(found.nayax_product_name),\n    mdb_code: clean(found.mdb_code),\n    sale_price_eur: clean(found.sale_price_eur)\n  };\n\n  decision = 'use_existing_product_manual_key';\n}\n\nif (choice === 'NEW') {\n  const newName = first(\n    currentInput.new_nayax_product_name,\n    prepared.default_new_nayax_product_name,\n    source.nayax_product_name,\n    source.source_item\n  );\n\n  if (!newName) {\n    throw new Error('Nayax-Produktname fuer NEW fehlt.');\n  }\n\n  selectedProduct = {\n    product_key: clean(prepared.suggested_product_key) || keyFromName(newName),\n    internal_product_name: newName,\n    nayax_product_name: newName,\n    mdb_code: clean(currentInput.mdb_code_new_optional || formDecision.mdb_code_new_optional),\n    sale_price_eur: clean(currentInput.sale_price_eur_new_optional || formDecision.sale_price_eur_new_optional)\n  };\n\n  decision = 'create_new_product';\n}\n\nconst quantityRaw = first(formDecision.quantity_override, prepared.default_quantity);\nconst quantity = Number(String(quantityRaw).replace(',', '.'));\n\nif (!Number.isFinite(quantity) || quantity <= 0) {\n  throw new Error('Menge fehlt oder ist ungueltig: ' + quantityRaw);\n}\n\nconst purchaseDate = first(source.purchase_date, source.invoice_date, new Date().toISOString().slice(0, 10));\nconst ymd = purchaseDate.replace(/-/g, '');\nconst safeProduct = selectedProduct.product_key.replace(/^SKU_/, '').replace(/[^A-Za-z0-9_]/g, '_');\nconst stableId = prepared.approval_id.replace(/[^A-Za-z0-9]/g, '_');\n\nconst aliasName = first(formDecision.alias_name, prepared.default_alias_name, source.source_item);\nconst unitCost = first(formDecision.unit_cost_override, prepared.default_unit_cost, source.detected_unit_cost);\nconst mhd = first(formDecision.mhd_override, prepared.default_mhd, source.detected_mhd);\nconst storageLocation = first(formDecision.storage_location_override, prepared.default_storage_location, 'Lager');\nconst notes = clean(formDecision.notes || source.notes);\n\nreturn [{\n  json: {\n    approval_id: prepared.approval_id,\n    decision,\n    rejected: false,\n    selected_choice: choice,\n\n    product_key: selectedProduct.product_key,\n    product_name: selectedProduct.internal_product_name || selectedProduct.nayax_product_name,\n    internal_product_name: selectedProduct.internal_product_name,\n    nayax_product_name: selectedProduct.nayax_product_name,\n    mdb_code: selectedProduct.mdb_code,\n    sale_price_eur: selectedProduct.sale_price_eur,\n\n    alias_name: aliasName,\n    normalized_alias: normalize(aliasName),\n\n    batch_id: `B_${safeProduct}_${ymd}_${stableId}`,\n    purchase_date: purchaseDate,\n    mhd,\n    initial_qty: quantity,\n    remaining_qty: quantity,\n    quantity,\n    unit_cost: unitCost,\n    supplier: clean(source.supplier),\n    storage_location: storageLocation,\n    status: 'active',\n    notes,\n\n    source_invoice: first(source.invoice_id, source.invoice_number, source.invoice_key),\n    source_item: first(source.source_item, source.raw_item_name),\n    confidence: choice === 'NEW'\n      ? 'neu_manuell_bestaetigt'\n      : 'bestehendes_produkt_manuell_bestaetigt',\n\n    processed_at: now,\n    is_new_product: choice === 'NEW',\n    start_wf4_assignment: ['ja','yes','true','1'].includes(normalize(formDecision.product_direct_slot_assignment || '')),\n    slot_machine_id: first(formDecision.slot_machine_id, '457107528'),\n    slot_mdb_code: first(formDecision.slot_mdb_code, selectedProduct.mdb_code),\n    slot_current_machine_qty: first(formDecision.slot_current_machine_qty),\n    slot_machine_capacity: first(formDecision.slot_machine_capacity),\n    slot_target_stock: first(formDecision.slot_target_stock),\n    slot_min_stock: first(formDecision.slot_min_stock)\n  }\n}];",
+        "jsCode": "const prepared = $('Code - Produktvorschlaege vorbereiten').first().json;\nconst formDecision = $('Form - Produktentscheidung').first().json;\nconst currentInput = $input.first().json;\n\nfunction clean(v) {\n  return String(v ?? '').replace(/\\n/g, ' ').replace(/\\s+/g, ' ').trim();\n}\n\nfunction normalize(v) {\n  return clean(v)\n    .toLowerCase()\n    .replace(/&/g, 'und')\n    .replace(/\\+/g, 'plus')\n    .replace(/ä/g, 'ae')\n    .replace(/ö/g, 'oe')\n    .replace(/ü/g, 'ue')\n    .replace(/ß/g, 'ss')\n    .replace(/[^a-z0-9]/g, '');\n}\n\nfunction first(...vals) {\n  return vals.map(clean).find(v => v !== '') || '';\n}\n\nfunction parseNumber(v) {\n  const raw = clean(v).replace(/[^\\d,.\\-]/g, '');\n  if (!raw) return NaN;\n  let normalized = raw;\n  const lastComma = raw.lastIndexOf(',');\n  const lastDot = raw.lastIndexOf('.');\n  if (lastComma >= 0 && lastDot >= 0) {\n    normalized = lastComma > lastDot\n      ? raw.replace(/\\./g, '').replace(',', '.')\n      : raw.replace(/,/g, '');\n  } else if (lastComma >= 0) {\n    normalized = raw.replace(',', '.');\n  }\n  const value = Number(normalized);\n  return Number.isFinite(value) ? value : NaN;\n}\n\nfunction formatDecimal(v) {\n  if (!Number.isFinite(v)) return '';\n  return String(Math.round(v * 10000) / 10000);\n}\n\nfunction normalizeProduktart(v) {\n  const n = normalize(v);\n  if (!n) return '';\n  if (['getraenk', 'getraenke', 'drink', 'drinks', 'beverage', 'beverages'].includes(n)) return 'getraenk';\n  if (['snack', 'snacks', 'food', 'lebensmittel', 'suessware', 'suesswaren'].includes(n)) return 'snack';\n  return '';\n}\n\nfunction inferProduktart(...vals) {\n  const explicit = vals.map(normalizeProduktart).find(Boolean);\n  if (explicit) return explicit;\n\n  const text = normalize(vals.map(clean).join(' '));\n  const drinkHints = [\n    'getraenk', 'getraenke', 'drink', 'cola', 'fanta', 'sprite', 'mezzo', 'wasser',\n    'water', 'saft', 'juice', 'eistee', 'icetea', 'mate', 'redbull', 'energy',\n    'kaffee', 'cappuccino', 'espresso', 'bier', 'limo', 'schorle',\n  ];\n\n  return drinkHints.some(hint => text.includes(hint)) ? 'getraenk' : 'snack';\n}\n\nfunction normalizeMwst(v) {\n  const parsed = parseNumber(v);\n  if (!Number.isFinite(parsed) || parsed <= 0) return NaN;\n  const percent = parsed > 0 && parsed < 1 ? parsed * 100 : parsed;\n  return Math.round(percent * 100) / 100;\n}\n\nfunction inferMwstSatz(produktart, ...vals) {\n  for (const val of vals) {\n    const parsed = normalizeMwst(val);\n    if (Number.isFinite(parsed)) return parsed;\n  }\n  return produktart === 'getraenk' ? 19 : 7;\n}\n\nfunction calculateCosts(bruttoRaw, nettoRaw, mwstSatz) {\n  let brutto = parseNumber(bruttoRaw);\n  let netto = parseNumber(nettoRaw);\n  const factor = 1 + (Number(mwstSatz) || 0) / 100;\n\n  if (!Number.isFinite(brutto) && Number.isFinite(netto) && factor > 0) {\n    brutto = netto * factor;\n  }\n  if (!Number.isFinite(netto) && Number.isFinite(brutto) && factor > 0) {\n    netto = brutto / factor;\n  }\n\n  return {\n    brutto: formatDecimal(brutto),\n    netto: formatDecimal(netto),\n  };\n}\n\nfunction keyFromName(name) {\n  const base = clean(name)\n    .toUpperCase()\n    .replace(/Ä/g, 'AE')\n    .replace(/Ö/g, 'OE')\n    .replace(/Ü/g, 'UE')\n    .replace(/ẞ/g, 'SS')\n    .replace(/ß/g, 'SS')\n    .replace(/&/g, 'UND')\n    .replace(/\\+/g, 'PLUS')\n    .replace(/[^A-Z0-9]+/g, '_')\n    .replace(/^_+|_+$/g, '');\n  return `SKU_${base || 'UNBEKANNT'}`;\n}\n\nconst choice = clean(formDecision.Auswahl).toUpperCase();\n\nif (!['1', '2', '3', 'KEY', 'NEW', 'REJECT'].includes(choice)) {\n  throw new Error('Ungueltige Auswahl. Erlaubt sind 1, 2, 3, KEY, NEW oder REJECT.');\n}\n\nconst source = prepared.source;\nconst now = new Date().toISOString();\n\nif (choice === 'REJECT') {\n  return [{\n    json: {\n      approval_id: prepared.approval_id,\n      decision: 'reject',\n      rejected: true,\n      processed_at: now,\n      status: 'rejected',\n      notes: clean(formDecision.notes || source.notes),\n\n      source_file: clean(source.source_file_name || source.source_file),\n      source_file_id: clean(source.source_file_id),\n      source_file_name: clean(source.source_file_name),\n\n      invoice_number: clean(source.invoice_number || source.invoice_id),\n      invoice_date: clean(source.invoice_date || source.purchase_date),\n      invoice_id: clean(source.invoice_id),\n      invoice_key: clean(source.invoice_key),\n\n      supplier: clean(source.supplier),\n      purchase_date: clean(source.purchase_date),\n      line_number: clean(source.line_number),\n      source_item: clean(source.source_item),\n      raw_item_name: clean(source.source_item || source.raw_item_name),\n\n      recognized_product_name: clean(source.recognized_product_name || source.nayax_product_name),\n      suggested_product_key: clean(source.suggested_product_key),\n      matched_product_key: clean(source.matched_product_key),\n\n      quantity: clean(source.detected_quantity || source.quantity),\n      unit_cost: clean(source.detected_ek_preis_netto || source.detected_unit_cost || source.unit_cost),\n      mhd_invoice: clean(source.detected_mhd || source.mhd_invoice),\n      mhd_final: clean(source.mhd_final),\n\n      confidence: 'abgelehnt_manuell',\n      mdb_code: clean(source.mdb_code),\n      nayax_product_name: clean(source.nayax_product_name),\n\n      existing_product_key: clean(source.existing_product_key),\n      existing_product_name: clean(source.existing_product_name),\n\n      suggested_batch_id: clean(source.suggested_batch_id),\n      suggested_storage_location: clean(source.suggested_storage_location),\n      suggested_action: clean(source.suggested_action),\n\n      needs_user_input: clean(source.needs_user_input),\n      missing_fields: clean(source.missing_fields),\n\n      detected_quantity: clean(source.detected_quantity),\n      detected_mhd: clean(source.detected_mhd),\n      detected_unit_cost: clean(source.detected_unit_cost),\n      detected_unit_cost_brutto: clean(source.detected_unit_cost_brutto || source.unit_cost_brutto),\n      detected_ek_preis_netto: clean(source.detected_ek_preis_netto || source.ek_preis_netto),\n      detected_mwst_satz: clean(source.detected_mwst_satz || source.mwst_satz),\n      detected_produktart: clean(source.detected_produktart || source.produktart),\n\n      final_product_key: '',\n      final_product_name: '',\n      final_mdb_code: '',\n      final_sale_price_eur: '',\n      final_quantity: '',\n      final_mhd: '',\n      final_unit_cost: '',\n      final_storage_location: '',\n      final_ek_preis_netto: '',\n      final_ek_preis_brutto: '',\n      final_mwst_satz: '',\n      final_produktart: '',\n      error_message: ''\n    }\n  }];\n}\n\nlet selectedProduct = null;\nlet decision = '';\n\nif (['1', '2', '3'].includes(choice)) {\n  const candidate = prepared.candidates.find(c => c.number === choice);\n\n  if (!candidate) {\n    throw new Error('Kandidat nicht gefunden fuer Auswahl: ' + choice);\n  }\n\n  selectedProduct = {\n    product_key: clean(candidate.product_key),\n    internal_product_name: clean(candidate.internal_product_name),\n    nayax_product_name: clean(candidate.nayax_product_name),\n    mdb_code: clean(candidate.mdb_code),\n    sale_price_eur: clean(candidate.sale_price_eur),\n    produktart: clean(candidate.produktart),\n    mwst_satz: clean(candidate.mwst_satz)\n  };\n\n  decision = 'use_existing_product';\n}\n\nif (choice === 'KEY') {\n  const manualKey = clean(formDecision.manual_existing_product_key);\n\n  if (!manualKey) {\n    throw new Error('Bitte manual_existing_product_key angeben, wenn KEY gewaehlt wurde.');\n  }\n\n  const found = prepared.all_products.find(p => clean(p.product_key) === manualKey);\n\n  if (!found) {\n    throw new Error('Kein vorhandenes Produkt mit diesem product_key gefunden: ' + manualKey);\n  }\n\n  selectedProduct = {\n    product_key: clean(found.product_key),\n    internal_product_name: clean(found.internal_product_name),\n    nayax_product_name: clean(found.nayax_product_name),\n    mdb_code: clean(found.mdb_code),\n    sale_price_eur: clean(found.sale_price_eur),\n    produktart: clean(found.produktart),\n    mwst_satz: clean(found.mwst_satz)\n  };\n\n  decision = 'use_existing_product_manual_key';\n}\n\nif (choice === 'NEW') {\n  const newName = first(\n    currentInput.new_nayax_product_name,\n    prepared.default_new_nayax_product_name,\n    source.nayax_product_name,\n    source.source_item\n  );\n\n  if (!newName) {\n    throw new Error('Nayax-Produktname fuer NEW fehlt.');\n  }\n\n  selectedProduct = {\n    product_key: clean(prepared.suggested_product_key) || keyFromName(newName),\n    internal_product_name: newName,\n    nayax_product_name: newName,\n    mdb_code: clean(currentInput.mdb_code_new_optional || formDecision.mdb_code_new_optional),\n    sale_price_eur: clean(currentInput.sale_price_eur_new_optional || formDecision.sale_price_eur_new_optional),\n    produktart: '',\n    mwst_satz: ''\n  };\n\n  decision = 'create_new_product';\n}\n\nconst quantityRaw = first(formDecision.quantity_override, prepared.default_quantity);\nconst quantity = Number(String(quantityRaw).replace(',', '.'));\n\nif (!Number.isFinite(quantity) || quantity <= 0) {\n  throw new Error('Menge fehlt oder ist ungueltig: ' + quantityRaw);\n}\n\nconst produktart = inferProduktart(\n  formDecision.produktart_override,\n  prepared.default_produktart,\n  selectedProduct.produktart,\n  source.detected_produktart,\n  source.produktart,\n  source.source_item,\n  source.nayax_product_name\n);\nconst mwstSatzNumber = inferMwstSatz(\n  produktart,\n  formDecision.mwst_satz_override,\n  prepared.default_mwst_satz,\n  selectedProduct.mwst_satz,\n  source.detected_mwst_satz,\n  source.mwst_satz\n);\nconst mwstSatz = formatDecimal(mwstSatzNumber);\nconst unitCostBruttoRaw = first(\n  formDecision.unit_cost_override,\n  prepared.default_unit_cost_brutto,\n  prepared.default_unit_cost,\n  source.detected_unit_cost_brutto,\n  source.unit_cost_brutto,\n  source.detected_unit_cost,\n  source.unit_cost\n);\nconst unitCostNettoRaw = first(\n  formDecision.unit_cost_netto_override,\n  prepared.default_unit_cost_netto,\n  source.detected_ek_preis_netto,\n  source.ek_preis_netto\n);\nconst costs = calculateCosts(unitCostBruttoRaw, unitCostNettoRaw, mwstSatzNumber);\n\nconst purchaseDate = first(source.purchase_date, source.invoice_date, new Date().toISOString().slice(0, 10));\nconst ymd = purchaseDate.replace(/-/g, '');\nconst safeProduct = selectedProduct.product_key.replace(/^SKU_/, '').replace(/[^A-Za-z0-9_]/g, '_');\nconst stableId = prepared.approval_id.replace(/[^A-Za-z0-9]/g, '_');\n\nconst aliasName = first(formDecision.alias_name, prepared.default_alias_name, source.source_item);\nconst unitCost = costs.netto || unitCostNettoRaw;\nconst mhd = first(formDecision.mhd_override, prepared.default_mhd, source.detected_mhd);\nconst storageLocation = first(formDecision.storage_location_override, prepared.default_storage_location, 'Lager');\nconst notes = clean(formDecision.notes || source.notes);\n\nreturn [{\n  json: {\n    approval_id: prepared.approval_id,\n    decision,\n    rejected: false,\n    selected_choice: choice,\n\n    product_key: selectedProduct.product_key,\n    product_name: selectedProduct.internal_product_name || selectedProduct.nayax_product_name,\n    internal_product_name: selectedProduct.internal_product_name,\n    nayax_product_name: selectedProduct.nayax_product_name,\n    mdb_code: selectedProduct.mdb_code,\n    sale_price_eur: selectedProduct.sale_price_eur,\n    produktart,\n\n    alias_name: aliasName,\n    normalized_alias: normalize(aliasName),\n\n    batch_id: `B_${safeProduct}_${ymd}_${stableId}`,\n    purchase_date: purchaseDate,\n    mhd,\n    initial_qty: quantity,\n    remaining_qty: quantity,\n    quantity,\n    unit_cost: unitCost,\n    ek_preis_netto: costs.netto || unitCost,\n    ek_preis_brutto: costs.brutto || unitCostBruttoRaw,\n    unit_cost_brutto: costs.brutto || unitCostBruttoRaw,\n    mwst_satz: mwstSatz,\n    supplier: clean(source.supplier),\n    storage_location: storageLocation,\n    status: 'active',\n    notes,\n\n    source_invoice: first(source.invoice_id, source.invoice_number, source.invoice_key),\n    source_item: first(source.source_item, source.raw_item_name),\n    confidence: choice === 'NEW'\n      ? 'neu_manuell_bestaetigt'\n      : 'bestehendes_produkt_manuell_bestaetigt',\n\n    processed_at: now,\n    is_new_product: choice === 'NEW',\n    start_wf4_assignment: ['ja','yes','true','1'].includes(normalize(formDecision.product_direct_slot_assignment || '')),\n    slot_machine_id: first(formDecision.slot_machine_id, '457107528'),\n    slot_mdb_code: first(formDecision.slot_mdb_code, selectedProduct.mdb_code),\n    slot_current_machine_qty: first(formDecision.slot_current_machine_qty),\n    slot_machine_capacity: first(formDecision.slot_machine_capacity),\n    slot_target_stock: first(formDecision.slot_target_stock),\n    slot_min_stock: first(formDecision.slot_min_stock)\n  }\n}];",
         "mode": "runOnceForAllItems"
       },
       "id": "6c8804e2-057c-4c26-90e5-b8c7998dfe3e",
@@ -350,7 +367,8 @@
             "valid_from": "={{ $now.toISODate() }}",
             "active": "FALSE",
             "stock_source": "Rechnungseingang_Produktstamm",
-            "notes": "={{ [$json.notes, 'WF2: Produktstamm ohne Slotzuordnung. Slotdaten werden nur durch WF4 gesetzt.'].filter(Boolean).join(' | ') }}"
+            "notes": "={{ [$json.notes, 'WF2: Produktstamm ohne Slotzuordnung. Slotdaten werden nur durch WF4 gesetzt.'].filter(Boolean).join(' | ') }}",
+            "produktart": "={{ $json.produktart }}"
           },
           "matchingColumns": [],
           "schema": [
@@ -497,6 +515,16 @@
               "display": true,
               "type": "string",
               "canBeUsedToMatch": true
+            },
+            {
+              "id": "produktart",
+              "displayName": "produktart",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
             }
           ],
           "attemptToConvertTypes": false,
@@ -691,13 +719,14 @@
             "mhd": "={{ $('Code - Entscheidung auswerten').item.json.mhd }}",
             "initial_qty": "={{ $('Code - Entscheidung auswerten').item.json.initial_qty }}",
             "remaining_qty": "={{ $('Code - Entscheidung auswerten').item.json.remaining_qty }}",
-            "unit_cost": "={{ $('Code - Entscheidung auswerten').item.json.unit_cost }}",
+            "unit_cost": "={{ $('Code - Entscheidung auswerten').item.json.ek_preis_netto }}",
             "supplier": "={{ $('Code - Entscheidung auswerten').item.json.supplier }}",
             "storage_location": "={{ $('Code - Entscheidung auswerten').item.json.storage_location }}",
             "status": "={{ $('Code - Entscheidung auswerten').item.json.status }}",
             "source_invoice": "={{ $('Code - Entscheidung auswerten').item.json.source_invoice }}",
             "source_item": "={{ $('Code - Entscheidung auswerten').item.json.source_item }}",
-            "confidence": "={{ $('Code - Entscheidung auswerten').item.json.confidence }}"
+            "confidence": "={{ $('Code - Entscheidung auswerten').item.json.confidence }}",
+            "mwst_satz": "={{ $('Code - Entscheidung auswerten').item.json.mwst_satz }}"
           },
           "matchingColumns": [],
           "schema": [
@@ -827,6 +856,16 @@
               "display": true,
               "type": "string",
               "canBeUsedToMatch": true
+            },
+            {
+              "id": "mwst_satz",
+              "displayName": "mwst_satz",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
             }
           ],
           "attemptToConvertTypes": false,
@@ -877,7 +916,7 @@
             "final_sale_price_eur": "={{ $('Code - Entscheidung auswerten').item.json.sale_price_eur }}",
             "final_quantity": "={{ $('Code - Entscheidung auswerten').item.json.quantity }}",
             "final_mhd": "={{ $('Code - Entscheidung auswerten').item.json.mhd }}",
-            "final_unit_cost": "={{ $('Code - Entscheidung auswerten').item.json.unit_cost }}",
+            "final_unit_cost": "={{ $('Code - Entscheidung auswerten').item.json.ek_preis_netto }}",
             "final_storage_location": "={{ $('Code - Entscheidung auswerten').item.json.storage_location }}",
             "notes": "={{ $('Code - Entscheidung auswerten').item.json.notes }}",
             "source_file": "={{ $('Code - Produktvorschlaege vorbereiten').item.json.source.source_file_name }}",
@@ -887,7 +926,7 @@
             "recognized_product_name": "={{ $('Code - Entscheidung auswerten').item.json.product_name }}",
             "matched_product_key": "={{ $('Code - Entscheidung auswerten').item.json.product_key }}",
             "quantity": "={{ $('Code - Entscheidung auswerten').item.json.quantity }}",
-            "unit_cost": "={{ $('Code - Entscheidung auswerten').item.json.unit_cost }}",
+            "unit_cost": "={{ $('Code - Entscheidung auswerten').item.json.ek_preis_netto }}",
             "mhd_invoice": "={{ $('Google Sheets - Pruefung lesen').item.json.mhd_invoice }}",
             "mhd_final": "={{ $('Code - Entscheidung auswerten').item.json.mhd }}",
             "confidence": "={{ $('Code - Entscheidung auswerten').item.json.confidence }}",
@@ -912,7 +951,19 @@
             "suggested_action": "={{ $('Code - Produktvorschlaege vorbereiten').item.json.source.suggested_action }}",
             "needs_user_input": "={{ $('Code - Produktvorschlaege vorbereiten').item.json.source.needs_user_input }}",
             "missing_fields": "={{ $('Code - Produktvorschlaege vorbereiten').item.json.source.missing_fields }}",
-            "error_message": "={{ $('Code - Produktvorschlaege vorbereiten').item.json.source.error_message }}"
+            "error_message": "={{ $('Code - Produktvorschlaege vorbereiten').item.json.source.error_message }}",
+            "detected_unit_cost_brutto": "={{ $('Code - Produktvorschlaege vorbereiten').item.json.source.detected_unit_cost_brutto }}",
+            "detected_ek_preis_netto": "={{ $('Code - Produktvorschlaege vorbereiten').item.json.source.detected_ek_preis_netto }}",
+            "detected_mwst_satz": "={{ $('Code - Produktvorschlaege vorbereiten').item.json.source.detected_mwst_satz }}",
+            "detected_produktart": "={{ $('Code - Produktvorschlaege vorbereiten').item.json.source.detected_produktart }}",
+            "unit_cost_brutto": "={{ $('Code - Entscheidung auswerten').item.json.ek_preis_brutto }}",
+            "ek_preis_netto": "={{ $('Code - Entscheidung auswerten').item.json.ek_preis_netto }}",
+            "mwst_satz": "={{ $('Code - Entscheidung auswerten').item.json.mwst_satz }}",
+            "produktart": "={{ $('Code - Entscheidung auswerten').item.json.produktart }}",
+            "final_ek_preis_netto": "={{ $('Code - Entscheidung auswerten').item.json.ek_preis_netto }}",
+            "final_ek_preis_brutto": "={{ $('Code - Entscheidung auswerten').item.json.ek_preis_brutto }}",
+            "final_mwst_satz": "={{ $('Code - Entscheidung auswerten').item.json.mwst_satz }}",
+            "final_produktart": "={{ $('Code - Entscheidung auswerten').item.json.produktart }}"
           },
           "matchingColumns": [
             "approval_id"
@@ -1391,6 +1442,126 @@
               "display": true,
               "type": "string",
               "canBeUsedToMatch": true
+            },
+            {
+              "id": "detected_unit_cost_brutto",
+              "displayName": "detected_unit_cost_brutto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "detected_ek_preis_netto",
+              "displayName": "detected_ek_preis_netto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "detected_mwst_satz",
+              "displayName": "detected_mwst_satz",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "detected_produktart",
+              "displayName": "detected_produktart",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "unit_cost_brutto",
+              "displayName": "unit_cost_brutto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "ek_preis_netto",
+              "displayName": "ek_preis_netto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "mwst_satz",
+              "displayName": "mwst_satz",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "produktart",
+              "displayName": "produktart",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "final_ek_preis_netto",
+              "displayName": "final_ek_preis_netto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "final_ek_preis_brutto",
+              "displayName": "final_ek_preis_brutto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "final_mwst_satz",
+              "displayName": "final_mwst_satz",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "final_produktart",
+              "displayName": "final_produktart",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
             },
             {
               "id": "row_number",
@@ -1457,7 +1628,7 @@
             "suggested_product_key": "={{ $json.suggested_product_key }}",
             "confidence": "={{ $json.confidence }}",
             "quantity": "={{ $json.detected_quantity }}",
-            "unit_cost": "={{ $json.detected_unit_cost }}",
+            "unit_cost": "={{ $json.detected_ek_preis_netto || $json.detected_unit_cost }}",
             "mhd_invoice": "={{ $json.detected_mhd }}",
             "mdb_code": "={{ $json.mdb_code }}",
             "nayax_product_name": "={{ $json.nayax_product_name }}",
@@ -1478,7 +1649,19 @@
             "suggested_storage_location": "={{ $json.suggested_storage_location || '' }}",
             "suggested_action": "={{ $json.suggested_action || '' }}",
             "needs_user_input": "={{ $json.needs_user_input || false }}",
-            "missing_fields": "={{ $json.missing_fields || '' }}"
+            "missing_fields": "={{ $json.missing_fields || '' }}",
+            "detected_unit_cost_brutto": "={{ $json.detected_unit_cost_brutto }}",
+            "detected_ek_preis_netto": "={{ $json.detected_ek_preis_netto }}",
+            "detected_mwst_satz": "={{ $json.detected_mwst_satz }}",
+            "detected_produktart": "={{ $json.detected_produktart }}",
+            "unit_cost_brutto": "={{ $json.detected_unit_cost_brutto }}",
+            "ek_preis_netto": "={{ $json.detected_ek_preis_netto }}",
+            "mwst_satz": "={{ $json.detected_mwst_satz }}",
+            "produktart": "={{ $json.detected_produktart }}",
+            "final_ek_preis_netto": "={{ $json.final_ek_preis_netto }}",
+            "final_ek_preis_brutto": "={{ $json.final_ek_preis_brutto }}",
+            "final_mwst_satz": "={{ $json.final_mwst_satz }}",
+            "final_produktart": "={{ $json.final_produktart }}"
           },
           "matchingColumns": [
             "approval_id"
@@ -1965,6 +2148,126 @@
               "display": true,
               "type": "string",
               "canBeUsedToMatch": true
+            },
+            {
+              "id": "detected_unit_cost_brutto",
+              "displayName": "detected_unit_cost_brutto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "detected_ek_preis_netto",
+              "displayName": "detected_ek_preis_netto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "detected_mwst_satz",
+              "displayName": "detected_mwst_satz",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "detected_produktart",
+              "displayName": "detected_produktart",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "unit_cost_brutto",
+              "displayName": "unit_cost_brutto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "ek_preis_netto",
+              "displayName": "ek_preis_netto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "mwst_satz",
+              "displayName": "mwst_satz",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "produktart",
+              "displayName": "produktart",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "final_ek_preis_netto",
+              "displayName": "final_ek_preis_netto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "final_ek_preis_brutto",
+              "displayName": "final_ek_preis_brutto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "final_mwst_satz",
+              "displayName": "final_mwst_satz",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "final_produktart",
+              "displayName": "final_produktart",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
             },
             {
               "id": "row_number",

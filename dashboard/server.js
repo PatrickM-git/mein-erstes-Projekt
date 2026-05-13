@@ -20,6 +20,7 @@ const workflowFiles = [
   'WF3 Nayax Lynx FIFO Lagerbestand - manueller Abruf - mit WF4 Integration.json',
   'WF4 - MDB Produktzuordnung bearbeiten.json',
   'WF5 - MHD und niedrige Lagercharge ueberwachen.json',
+  'WF8 - GuV Tagesposten Aggregator.json',
 ];
 
 const workbookFilePattern = /^nayax_lager.*\.xlsx$/i;
@@ -41,6 +42,8 @@ const liveSheetNames = [
   'Einstellungen',
   'Quellen_und_Pruefung',
   'Verarbeitete_Transaktionen',
+  'GuV_Tagesposten',
+  'GuV_Konfiguration',
   'System_Status',
 ];
 
@@ -112,6 +115,27 @@ function clean(value) {
 function normalizeNumber(value) {
   const n = Number(clean(value).replace(',', '.'));
   return Number.isFinite(n) ? n : NaN;
+}
+
+function parseMoneyNumber(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  const raw = clean(value).replace(/[^0-9,.-]/g, '');
+  if (!raw) return 0;
+
+  const lastComma = raw.lastIndexOf(',');
+  const lastDot = raw.lastIndexOf('.');
+  let normalized = raw;
+
+  if (lastComma >= 0 && lastDot >= 0) {
+    normalized = lastComma > lastDot
+      ? raw.replace(/\./g, '').replace(',', '.')
+      : raw.replace(/,/g, '');
+  } else if (lastComma >= 0) {
+    normalized = raw.replace(',', '.');
+  }
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function mdbNorm(value) {
@@ -786,6 +810,16 @@ async function readGoogleSheetsLive() {
   };
 }
 
+async function readWorkbookSource() {
+  try {
+    return await readGoogleSheetsLive();
+  } catch (error) {
+    const workbookSource = readWorkbook(findLatestWorkbookFile());
+    workbookSource.fallbackReason = error.message;
+    return workbookSource;
+  }
+}
+
 function groupBy(rows, keyFn) {
   const map = new Map();
   for (const row of rows) {
@@ -916,13 +950,7 @@ async function buildDashboard() {
       workflows: [],
     };
   }
-  let workbookSource;
-  try {
-    workbookSource = await readGoogleSheetsLive();
-  } catch (error) {
-    workbookSource = readWorkbook(findLatestWorkbookFile());
-    workbookSource.fallbackReason = error.message;
-  }
+  const workbookSource = await readWorkbookSource();
   const workbook = summarizeWorkbook(workbookSource);
   const allChecks = workflows.flatMap((workflow) => workflow.checks);
   const actions = buildWorkflowActions(n8n);
@@ -951,6 +979,178 @@ async function buildDashboard() {
       ].filter(Boolean),
     },
   };
+}
+
+function startOfIsoWeek(date) {
+  const out = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const day = out.getUTCDay() || 7;
+  out.setUTCDate(out.getUTCDate() - day + 1);
+  return out;
+}
+
+function startOfQuarter(date) {
+  const month = Math.floor(date.getUTCMonth() / 3) * 3;
+  return new Date(Date.UTC(date.getUTCFullYear(), month, 1));
+}
+
+function isoDate(value) {
+  const parsed = parseDate(value);
+  return parsed ? parsed.toISOString().slice(0, 10) : '';
+}
+
+function rangeFromQuery(query) {
+  const today = new Date();
+  const todayUtc = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  const explicitStart = isoDate(query.start || query.from);
+  const explicitEnd = isoDate(query.end || query.to);
+
+  if (explicitStart || explicitEnd) {
+    return {
+      range: 'custom',
+      start: explicitStart,
+      end: explicitEnd || todayUtc.toISOString().slice(0, 10),
+    };
+  }
+
+  const range = clean(query.range || 'month').toLowerCase();
+  let start = null;
+  if (range === 'week') start = startOfIsoWeek(todayUtc);
+  if (range === 'quarter') start = startOfQuarter(todayUtc);
+  if (range === 'year') start = new Date(Date.UTC(todayUtc.getUTCFullYear(), 0, 1));
+  if (range === 'all') start = null;
+  if (!start && range !== 'all') start = new Date(Date.UTC(todayUtc.getUTCFullYear(), todayUtc.getUTCMonth(), 1));
+
+  return {
+    range,
+    start: start ? start.toISOString().slice(0, 10) : '',
+    end: range === 'all' ? '' : todayUtc.toISOString().slice(0, 10),
+  };
+}
+
+function roundMoney(value) {
+  return Math.round((Number(value) || 0) * 100) / 100;
+}
+
+function buildGuvResponse(workbookSource, query = {}) {
+  const rows = workbookSource.sheets.GuV_Tagesposten || [];
+  const filter = rangeFromQuery(query);
+  const machineFilter = clean(query.machine_id || query.machine || '');
+
+  const filteredRows = rows.filter((row) => {
+    const date = isoDate(row.date);
+    if (!date) return false;
+    if (filter.start && date < filter.start) return false;
+    if (filter.end && date > filter.end) return false;
+    if (machineFilter && clean(row.machine_id) !== machineFilter) return false;
+    return true;
+  });
+
+  const totals = filteredRows.reduce((acc, row) => {
+    acc.quantitySold += parseMoneyNumber(row.quantity_sold);
+    acc.umsatzBrutto += parseMoneyNumber(row.umsatz_brutto);
+    acc.wareneinsatzBrutto += parseMoneyNumber(row.wareneinsatz_brutto);
+    acc.guv += parseMoneyNumber(row.guv);
+    return acc;
+  }, {
+    quantitySold: 0,
+    umsatzBrutto: 0,
+    wareneinsatzBrutto: 0,
+    guv: 0,
+  });
+
+  const productMap = new Map();
+  const machineMap = new Map();
+
+  for (const row of filteredRows) {
+    const productKey = clean(row.product_key || row.nayax_product_name || 'UNBEKANNT');
+    const product = productMap.get(productKey) || {
+      product_key: productKey,
+      nayax_product_name: clean(row.nayax_product_name),
+      produktart: clean(row.produktart),
+      quantity_sold: 0,
+      umsatz_brutto: 0,
+      wareneinsatz_brutto: 0,
+      guv: 0,
+      machines: new Set(),
+    };
+    product.quantity_sold += parseMoneyNumber(row.quantity_sold);
+    product.umsatz_brutto += parseMoneyNumber(row.umsatz_brutto);
+    product.wareneinsatz_brutto += parseMoneyNumber(row.wareneinsatz_brutto);
+    product.guv += parseMoneyNumber(row.guv);
+    if (clean(row.machine_id)) product.machines.add(clean(row.machine_id));
+    productMap.set(productKey, product);
+
+    const machineId = clean(row.machine_id || 'UNBEKANNT');
+    const machine = machineMap.get(machineId) || {
+      machine_id: machineId,
+      quantity_sold: 0,
+      umsatz_brutto: 0,
+      wareneinsatz_brutto: 0,
+      guv: 0,
+    };
+    machine.quantity_sold += parseMoneyNumber(row.quantity_sold);
+    machine.umsatz_brutto += parseMoneyNumber(row.umsatz_brutto);
+    machine.wareneinsatz_brutto += parseMoneyNumber(row.wareneinsatz_brutto);
+    machine.guv += parseMoneyNumber(row.guv);
+    machineMap.set(machineId, machine);
+  }
+
+  const products = [...productMap.values()]
+    .map((row) => ({
+      ...row,
+      machines: [...row.machines].sort(),
+      quantity_sold: roundMoney(row.quantity_sold),
+      umsatz_brutto: roundMoney(row.umsatz_brutto),
+      wareneinsatz_brutto: roundMoney(row.wareneinsatz_brutto),
+      guv: roundMoney(row.guv),
+      avg_vk_preis_brutto: row.quantity_sold > 0 ? roundMoney(row.umsatz_brutto / row.quantity_sold) : 0,
+    }))
+    .sort((a, b) => b.guv - a.guv);
+
+  const machines = [...machineMap.values()]
+    .map((row) => ({
+      ...row,
+      quantity_sold: roundMoney(row.quantity_sold),
+      umsatz_brutto: roundMoney(row.umsatz_brutto),
+      wareneinsatz_brutto: roundMoney(row.wareneinsatzBrutto || row.wareneinsatz_brutto),
+      guv: roundMoney(row.guv),
+    }))
+    .sort((a, b) => a.machine_id.localeCompare(b.machine_id, 'de'));
+
+  return {
+    generatedAt: new Date().toISOString(),
+    source: {
+      type: workbookSource.source || 'unknown',
+      fileName: workbookSource.fileName || '',
+      updatedAt: workbookSource.updatedAt || '',
+      fallbackReason: workbookSource.fallbackReason || '',
+      rowsAvailable: rows.length,
+      rowsMatched: filteredRows.length,
+    },
+    filters: {
+      range: filter.range,
+      start: filter.start,
+      end: filter.end,
+      machine_id: machineFilter,
+    },
+    kpis: {
+      umsatz_brutto: roundMoney(totals.umsatzBrutto),
+      wareneinsatz_brutto: roundMoney(totals.wareneinsatzBrutto),
+      guv: roundMoney(totals.guv),
+      quantity_sold: roundMoney(totals.quantitySold),
+      posten_count: filteredRows.length,
+      product_count: products.length,
+      machine_count: machines.length,
+    },
+    machines,
+    products,
+    rows: filteredRows.slice(0, 500),
+  };
+}
+
+async function buildGuv(query = {}) {
+  const workbookSource = await readWorkbookSource();
+  return buildGuvResponse(workbookSource, query);
 }
 
 function sendJson(res, status, data) {
@@ -987,6 +1187,11 @@ const server = http.createServer(async (req, res) => {
   try {
     if (parsed.pathname === '/api/dashboard') {
       sendJson(res, 200, await buildDashboard());
+      return;
+    }
+
+    if (parsed.pathname === '/api/guv') {
+      sendJson(res, 200, await buildGuv(parsed.query));
       return;
     }
 
